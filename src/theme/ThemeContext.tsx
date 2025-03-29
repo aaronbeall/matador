@@ -20,6 +20,17 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   const theme = createTheme({
     palette: {
       mode: isDarkMode ? 'dark' : 'light',
+      primary: {
+        main: '#4caf50', // revert to original green for both modes
+        dark: '#002200',
+      },
+      background: {
+        default: isDarkMode ? '#121212' : '#eef7ee',
+        paper: isDarkMode ? '#1e1e1e' : '#ffffff',
+      },
+      text: {
+        primary: isDarkMode ? '#ffffff' : '#002200',
+      },
     },
   });
 

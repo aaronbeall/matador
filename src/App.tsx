@@ -467,10 +467,13 @@ const AppContent = () => {
             variant="h6" 
             component="div"
             sx={{ 
-              color: '#4caf50',
+              color: theme => theme.palette.mode === 'dark' ? '#4caf50' : '#1b5e20',
               fontWeight: 'bold',
               letterSpacing: 2,
-              textShadow: '1px 1px 1px rgba(0,0,0,0.5)',
+              textShadow: theme => 
+                theme.palette.mode === 'dark' 
+                  ? '1px 1px 1px rgba(0,0,0,0.5)' 
+                  : '1px 1px 1px rgba(76,225,80,0.5)',
               fontFamily: 'system-ui',
               fontSize: '1.5rem'
             }}
