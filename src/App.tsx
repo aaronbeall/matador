@@ -55,7 +55,7 @@ type TimeFrame = '15m' | '1h' | '1d' | '1w';
 
 const FINHUB_API_KEY = import.meta.env.VITE_FINHUB_API_KEY;
 
-const CustomTooltip = ({ active, payload, label }: TooltipProps<number, string>) => {
+const ChartTooltip = ({ active, payload, label }: TooltipProps<number, string>) => {
   const { isDarkMode } = useTheme();
   if (!active || !payload?.[0]?.payload) return null;
   
@@ -64,12 +64,16 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number, string>)
   return (
     <Box
       sx={{
-        backgroundColor: isDarkMode ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.85)',
+        backgroundColor: isDarkMode ? 'rgba(0,0,0,0.9)' : 'rgba(255,255,255,0.9)',
         border: 1,
         borderColor: 'divider',
         borderRadius: 1,
-        p: 1,
+        p: 1.5,
         fontSize: '0.75rem',
+        boxShadow: theme => `0 4px 20px ${isDarkMode ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.25)'}`,
+        backdropFilter: 'blur(8px)',
+        transform: 'translateY(-4px)',
+        transition: 'all 0.2s ease-out',
       }}
     >
       <Typography variant="caption" display="block" color="text.secondary">
@@ -589,7 +593,7 @@ const AppContent = () => {
                 minTickGap={50}
               />
               <YAxis domain={['auto', 'auto']} />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={<ChartTooltip />} />
               <Line
                 type="linear"
                 dataKey="open"
