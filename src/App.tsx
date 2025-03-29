@@ -40,16 +40,63 @@ import { WebSocketManager } from './services/WebSocketManager';
 import { Trade } from './types/Trade';
 import { CandleStore } from './services/CandleStore';
 import { CandleStick, TimeInterval } from './types/CandleStick';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { styled } from '@mui/material/styles';
 import { TooltipProps } from 'recharts';
+import { 
+  ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Bar 
+} from 'recharts';
 
 const CHART_COLORS = {
   open: '#2196f3',
   high: '#4caf50',
   low: '#f44336',
   close: '#9c27b0',
+  bar: 'rgba(128, 128, 128, 0.2)',
 } as const;
+
+const CandleStickBar = (props: any) => {
+  const { x, y, width, height, payload } = props;
+  
+  const isBullish = payload.close > payload.open;
+  const color = isBullish ? '#4caf50' : '#f44336';
+  
+  // Calculate Y coordinates relative to the data range
+  const yScale = height / (props.high - props.low);
+  const yOffset = y + height;
+  
+  const getY = (value: number) => yOffset - (value - props.low) * yScale;
+  
+  // Wick coordinates
+  const wickTop = getY(payload.high);
+  const wickBottom = getY(payload.low);
+  
+  // Body coordinates (use open/close directly)
+  const openY = getY(payload.open);
+  const closeY = getY(payload.close);
+  
+  return (
+    <g>
+      {/* Wick */}
+      <line
+        x1={x + width / 2}
+        y1={wickTop}
+        x2={x + width / 2}
+        y2={wickBottom}
+        stroke={color}
+        strokeWidth={1}
+      />
+      {/* Body */}
+      <rect
+        x={x}
+        y={Math.min(openY, closeY)}
+        width={width}
+        height={Math.max(1, Math.abs(closeY - openY))}
+        fill={color}
+        fillOpacity={0.8}
+      />
+    </g>
+  );
+};
 
 type TimeFrame = '15m' | '1h' | '1d' | '1w';
 
@@ -575,7 +622,7 @@ const AppContent = () => {
         </Box>
         <Box sx={{ flexGrow: 1, minHeight: '400px' }}>
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={candles.filter(candle => {
+            <ComposedChart data={candles.filter(candle => {
               const [start] = getXAxisDomain();
               return candle.timestamp > start;
             })}>
@@ -594,6 +641,11 @@ const AppContent = () => {
               />
               <YAxis domain={['auto', 'auto']} />
               <Tooltip content={<ChartTooltip />} />
+              <Bar
+                dataKey={d => [d.high, d.low]}
+                shape={<CandleStickBar />}
+                name="Range"
+              />
               <Line
                 type="linear"
                 dataKey="open"
@@ -626,7 +678,7 @@ const AppContent = () => {
                 dot={false}
                 name="Close"
               />
-            </LineChart>
+            </ComposedChart>
           </ResponsiveContainer>
         </Box>
         <TableContainer 
