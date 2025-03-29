@@ -34,6 +34,8 @@ import {
   CheckCircle as CheckIcon,
   Cancel as CancelIcon,
   Refresh as RefreshIcon,
+  ShowChart as LineChartIcon,
+  CandlestickChart as CandleChartIcon,
 } from '@mui/icons-material';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { WebSocketManager } from './services/WebSocketManager';
@@ -52,14 +54,17 @@ const CHART_COLORS = {
   high: '#4caf50',
   low: '#f44336',
   close: '#9c27b0',
+  volume: '#ff9800',
   bar: 'rgba(128, 128, 128, 0.2)',
+  priceUp: '#4caf50',
+  priceDown: '#f44336',
 } as const;
 
 const CandleStickBar = (props: any) => {
   const { x, y, width, height, payload } = props;
   
   const isBullish = payload.close > payload.open;
-  const color = isBullish ? '#4caf50' : '#f44336';
+  const color = isBullish ? CHART_COLORS.priceUp : CHART_COLORS.priceDown;
   
   // Calculate Y coordinates relative to the data range
   const yScale = height / (props.high - props.low);
@@ -93,15 +98,24 @@ const CandleStickBar = (props: any) => {
         width={width}
         height={Math.max(1, Math.abs(closeY - openY))}
         fill={color}
-        fillOpacity={0.8}
       />
     </g>
   );
 };
 
 type TimeFrame = '15m' | '1h' | '1d' | '1w';
+type ChartMode = 'candles' | 'lines';
 
 const FINHUB_API_KEY = import.meta.env.VITE_FINHUB_API_KEY;
+
+const formatVolume = (volume: number) => {
+  if (volume >= 1000) {
+    return `${(volume / 1000).toFixed(1)}K`;
+  }
+  return volume.toLocaleString();
+};
+
+const formatPrice = (price: number) => `$${price.toFixed(2)}`;
 
 const ChartTooltip = ({ active, payload, label }: TooltipProps<number, string>) => {
   const { isDarkMode } = useTheme();
@@ -134,11 +148,11 @@ const ChartTooltip = ({ active, payload, label }: TooltipProps<number, string>) 
         mt: 0.5,
         color: 'text.primary',
       }}>
-        <span style={{ color: CHART_COLORS.open }}>O:</span><span>${candle.open.toFixed(2)}</span>
-        <span style={{ color: CHART_COLORS.high }}>H:</span><span>${candle.high.toFixed(2)}</span>
-        <span style={{ color: CHART_COLORS.low }}>L:</span><span>${candle.low.toFixed(2)}</span>
-        <span style={{ color: CHART_COLORS.close }}>C:</span><span>${candle.close.toFixed(2)}</span>
-        <span>V:</span><span>{candle.volume.toLocaleString()}</span>
+        <span style={{ color: CHART_COLORS.open }}>O:</span><span>{formatPrice(candle.open)}</span>
+        <span style={{ color: CHART_COLORS.high }}>H:</span><span>{formatPrice(candle.high)}</span>
+        <span style={{ color: CHART_COLORS.low }}>L:</span><span>{formatPrice(candle.low)}</span>
+        <span style={{ color: CHART_COLORS.close }}>C:</span><span>{formatPrice(candle.close)}</span>
+        <span style={{ color: CHART_COLORS.volume }}>V:</span><span>{formatVolume(candle.volume)}</span>
       </Box>
     </Box>
   );
@@ -163,6 +177,7 @@ const AppContent = () => {
   const [isFocused, setIsFocused] = useState(false);
   const [timeInterval, setTimeInterval] = useState<TimeInterval>('1m');
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('1h');
+  const [chartMode, setChartMode] = useState<ChartMode>('candles');
   const candleStore = useRef(new CandleStore());
   const [candles, setCandles] = useState<CandleStick[]>([]);
 
@@ -451,6 +466,13 @@ const AppContent = () => {
     return [now - timeFrameMs, now] as [number, number];
   }, [timeFrame]);
 
+  const isPriceUp = useCallback((candles: CandleStick[]) => {
+    if (candles.length < 2) return true;
+    const first = candles[0];
+    const last = candles[candles.length - 1];
+    return last.close >= first.open;
+  }, []);
+
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppBar position="static">
@@ -596,7 +618,7 @@ const AppContent = () => {
               onMouseLeave={() => setIsPriceHovered(false)}
             >
               <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
-                ${currentPriceValue.toFixed(2)}
+                {formatPrice(currentPriceValue)}
               </Typography>
               {!wsEnabled && (
                 <IconButton 
@@ -613,6 +635,22 @@ const AppContent = () => {
           )}
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="body2" color="text.secondary">Chart:</Typography>
+            <ToggleButtonGroup
+              value={chartMode}
+              exclusive
+              onChange={(_, newMode) => newMode && setChartMode(newMode)}
+              size="small"
+            >
+              <ToggleButton value="candles">
+                <CandleChartIcon />
+              </ToggleButton>
+              <ToggleButton value="lines">
+                <LineChartIcon />
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Typography variant="body2" color="text.secondary">Interval:</Typography>
             <ToggleButtonGroup
@@ -663,43 +701,51 @@ const AppContent = () => {
               />
               <YAxis domain={['auto', 'auto']} />
               <Tooltip content={<ChartTooltip />} />
-              <Bar
-                dataKey={d => [d.high, d.low]}
-                shape={<CandleStickBar />}
-                name="Range"
-              />
-              <Line
-                type="linear"
-                dataKey="open"
-                stroke={CHART_COLORS.open}
-                strokeWidth={1}
-                dot={false}
-                name="Open"
-              />
-              <Line
-                type="linear"
-                dataKey="high"
-                stroke={CHART_COLORS.high}
-                strokeWidth={1}
-                dot={false}
-                name="High"
-              />
-              <Line
-                type="linear"
-                dataKey="low"
-                stroke={CHART_COLORS.low}
-                strokeWidth={1}
-                dot={false}
-                name="Low"
-              />
-              <Line
-                type="linear"
-                dataKey="close"
-                stroke={CHART_COLORS.close}
-                strokeWidth={2}
-                dot={false}
-                name="Close"
-              />
+              {chartMode === 'candles' ? (
+                <Bar
+                  dataKey={d => [d.high, d.low]}
+                  shape={<CandleStickBar />}
+                  name="Range"
+                />
+              ) : (
+                <>
+                  <Line
+                    type="linear"
+                    dataKey="open"
+                    stroke={CHART_COLORS.open}
+                    strokeWidth={1}
+                    strokeDasharray="3 3"
+                    dot={false}
+                    name="Open"
+                  />
+                  <Line
+                    type="linear"
+                    dataKey="high"
+                    stroke={CHART_COLORS.high}
+                    strokeWidth={1}
+                    strokeDasharray="3 3"
+                    dot={false}
+                    name="High"
+                  />
+                  <Line
+                    type="linear"
+                    dataKey="low"
+                    stroke={CHART_COLORS.low}
+                    strokeWidth={1}
+                    strokeDasharray="3 3"
+                    dot={false}
+                    name="Low"
+                  />
+                  <Line
+                    type="linear"
+                    dataKey="close"
+                    stroke={isPriceUp(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
+                    strokeWidth={3}
+                    dot={false}
+                    name="Close"
+                  />
+                </>
+              )}
             </ComposedChart>
           </ResponsiveContainer>
         </Box>
@@ -729,19 +775,19 @@ const AppContent = () => {
                     {new Date(candle.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </StyledTableCell>
                   <StyledTableCell align="right">
-                    ${candle.open.toFixed(2)}
+                    {formatPrice(candle.open)}
                   </StyledTableCell>
                   <StyledTableCell align="right">
-                    ${candle.high.toFixed(2)}
+                    {formatPrice(candle.high)}
                   </StyledTableCell>
                   <StyledTableCell align="right">
-                    ${candle.low.toFixed(2)}
+                    {formatPrice(candle.low)}
                   </StyledTableCell>
                   <StyledTableCell align="right">
-                    ${candle.close.toFixed(2)}
+                    {formatPrice(candle.close)}
                   </StyledTableCell>
                   <StyledTableCell align="right">
-                    {candle.volume.toLocaleString()}
+                    {formatVolume(candle.volume)}
                   </StyledTableCell>
                 </TableRow>
               ))}
@@ -752,7 +798,7 @@ const AppContent = () => {
           {trade && (
             <>
               <Typography variant="body1">
-                Volume: {trade.volume.toLocaleString()}
+                Volume: {formatVolume(trade.volume)}
               </Typography>
               <Typography variant="body1">
                 Time: {new Date(trade.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
