@@ -31,7 +31,6 @@ import {
   Brightness4, 
   Brightness7, 
   SmartToy,
-  Savings as BullIcon,
   CheckCircle as CheckIcon,
   Cancel as CancelIcon,
   Refresh as RefreshIcon,
@@ -46,6 +45,7 @@ import { TooltipProps } from 'recharts';
 import { 
   ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Bar 
 } from 'recharts';
+import { Logo } from './components/Logo';
 
 const CHART_COLORS = {
   open: '#2196f3',
@@ -455,8 +455,26 @@ const AppContent = () => {
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppBar position="static">
         <Toolbar>
-          <BullIcon sx={{ mr: 1 }} />
-          <Typography variant="h6" component="div">
+          <Logo 
+            sx={{ 
+              mr: 1,
+              fontSize: '2rem',
+              color: '#002200',
+              '& g': { stroke: '#4caf50' }
+            }} 
+          />
+          <Typography 
+            variant="h6" 
+            component="div"
+            sx={{ 
+              color: '#4caf50',
+              fontWeight: 'bold',
+              letterSpacing: 2,
+              textShadow: '1px 1px 1px rgba(0,0,0,0.5)',
+              fontFamily: 'system-ui',
+              fontSize: '1.5rem'
+            }}
+          >
             MATADOR
           </Typography>
           <Divider orientation="vertical" flexItem sx={{ mx: 2 }} />
