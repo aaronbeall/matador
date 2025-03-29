@@ -31,6 +31,7 @@ import {
   Brightness4, 
   Brightness7, 
   SmartToy,
+  Savings as BullIcon,
   CheckCircle as CheckIcon,
   Cancel as CancelIcon,
   Refresh as RefreshIcon,
@@ -454,9 +455,9 @@ const AppContent = () => {
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppBar position="static">
         <Toolbar>
-          <SmartToy sx={{ mr: 1 }} />
+          <BullIcon sx={{ mr: 1 }} />
           <Typography variant="h6" component="div">
-            Robo Scalper 9000
+            MATADOR
           </Typography>
           <Divider orientation="vertical" flexItem sx={{ mx: 2 }} />
           <TextField
