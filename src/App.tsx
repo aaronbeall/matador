@@ -44,6 +44,13 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import { styled } from '@mui/material/styles';
 import { TooltipProps } from 'recharts';
 
+const CHART_COLORS = {
+  open: '#2196f3',
+  high: '#4caf50',
+  low: '#f44336',
+  close: '#9c27b0',
+} as const;
+
 type TimeFrame = '15m' | '1h' | '1d' | '1w';
 
 const FINHUB_API_KEY = import.meta.env.VITE_FINHUB_API_KEY;
@@ -75,10 +82,10 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number, string>)
         mt: 0.5,
         color: 'text.primary',
       }}>
-        <span>O:</span><span>${candle.open.toFixed(2)}</span>
-        <span>H:</span><span>${candle.high.toFixed(2)}</span>
-        <span>L:</span><span>${candle.low.toFixed(2)}</span>
-        <span>C:</span><span>${candle.close.toFixed(2)}</span>
+        <span style={{ color: CHART_COLORS.open }}>O:</span><span>${candle.open.toFixed(2)}</span>
+        <span style={{ color: CHART_COLORS.high }}>H:</span><span>${candle.high.toFixed(2)}</span>
+        <span style={{ color: CHART_COLORS.low }}>L:</span><span>${candle.low.toFixed(2)}</span>
+        <span style={{ color: CHART_COLORS.close }}>C:</span><span>${candle.close.toFixed(2)}</span>
         <span>V:</span><span>{candle.volume.toLocaleString()}</span>
       </Box>
     </Box>
@@ -162,17 +169,25 @@ const AppContent = () => {
     
     // Generate one hour of minute data
     for (let i = hours * 60; i >= 0; i--) {
-      const timestamp = now - (i * 60 * 1000); // step back by minutes
+      const minuteTimestamp = now - (i * 60 * 1000); // step back by minutes
       const volatility = currentPrice * 0.0002;
-      const change = (Math.random() - 0.5) * volatility;
-      currentPrice += change;
       
-      data.push({
-        price: currentPrice,
-        volume: Math.floor(Math.random() * 1000),
-        timestamp,
-        conditions: ['Historical']
-      });
+      // Generate 50-150 trades for this minute
+      const tradesCount = 50 + Math.floor(Math.random() * 100);
+      for (let j = 0; j < tradesCount; j++) {
+        const change = (Math.random() - 0.5) * volatility;
+        currentPrice += change;
+        
+        // Spread trades across the minute
+        const tradeTimestamp = minuteTimestamp + Math.floor(Math.random() * 60000);
+        
+        data.push({
+          price: currentPrice,
+          volume: 100 + Math.floor(Math.random() * 900),
+          timestamp: tradeTimestamp,
+          conditions: ['Historical']
+        });
+      }
     }
     
     return data;
@@ -183,19 +198,26 @@ const AppContent = () => {
     if (!basePrice) return;
     
     const volatility = basePrice * 0.0002; // 0.02% volatility
-    const change = (Math.random() - 0.5) * volatility;
-    const newPrice = basePrice + change;
-    setCurrentPrice(newPrice);
+    const now = Date.now();
     
-    // Simulate trade for candle generation
-    candleStore.current.addTrade({
-      price: newPrice,
-      volume: Math.floor(Math.random() * 1000),
-      timestamp: Date.now(),
-      conditions: ['Simulated']
-    });
+    // Generate 3-5 trades per second (roughly 50-150 per minute)
+    const tradesCount = 3 + Math.floor(Math.random() * 3);
+    
+    for (let i = 0; i < tradesCount; i++) {
+      const change = (Math.random() - 0.5) * volatility;
+      const newPrice = basePrice + change;
+      setCurrentPrice(newPrice);
+      
+      candleStore.current.addTrade({
+        price: newPrice,
+        volume: 100 + Math.floor(Math.random() * 900),
+        timestamp: now + (i * 10), // Spread trades slightly within the second
+        conditions: ['Simulated']
+      });
+    }
+    
     setCandles(candleStore.current.getCandles(timeInterval));
-  }, [timeInterval]); // Now only depends on timeFrame
+  }, [timeInterval]);
 
   useEffect(() => {
     if (wsEnabled) {
@@ -571,7 +593,7 @@ const AppContent = () => {
               <Line
                 type="linear"
                 dataKey="open"
-                stroke="#2196f3"
+                stroke={CHART_COLORS.open}
                 strokeWidth={1}
                 dot={false}
                 name="Open"
@@ -579,7 +601,7 @@ const AppContent = () => {
               <Line
                 type="linear"
                 dataKey="high"
-                stroke="#4caf50"
+                stroke={CHART_COLORS.high}
                 strokeWidth={1}
                 dot={false}
                 name="High"
@@ -587,7 +609,7 @@ const AppContent = () => {
               <Line
                 type="linear"
                 dataKey="low"
-                stroke="#f44336"
+                stroke={CHART_COLORS.low}
                 strokeWidth={1}
                 dot={false}
                 name="Low"
@@ -595,7 +617,7 @@ const AppContent = () => {
               <Line
                 type="linear"
                 dataKey="close"
-                stroke="#9c27b0"
+                stroke={CHART_COLORS.close}
                 strokeWidth={2}
                 dot={false}
                 name="Close"
