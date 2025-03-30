@@ -1,4 +1,5 @@
 import { Indicator } from "../utils/indicators";
+import { MACDResult } from "./TechnicalIndicators";
 
 export type Candlestick = {
   timestamp: number;
@@ -9,6 +10,6 @@ export type Candlestick = {
   volume: number;
 } & {
   [K in Indicator]?: number;
-};
+}
 
 export type TimeInterval = '1m' | '5m' | '15m' | '1h';

@@ -1,6 +1,6 @@
 import { Indicator } from '../utils/indicators';
 
-export const INDICATOR_DEFS = {
+export const INDICATOR_DEFS: Record<Indicator, { id: Indicator; name: string; description: string }> = {
   vwap: {
     id: 'vwap' as const,
     name: 'VWAP',
@@ -30,7 +30,17 @@ export const INDICATOR_DEFS = {
     id: 'sma200' as const,
     name: 'SMA(200)',
     description: '200-period SMA - Long-term trend indicator, commonly used to identify bull/bear markets'
+  },
+  macd: {
+    id: 'macd',
+    name: 'MACD',
+    description: 'Moving Average Convergence Divergence (12,26,9)'
+  },
+  rsi: {
+    id: 'rsi',
+    name: 'RSI',
+    description: 'Relative Strength Index (14)'
   }
-} as const;
+};
 
 export type IndicatorDef = typeof INDICATOR_DEFS[Indicator];

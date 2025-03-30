@@ -58,12 +58,13 @@ import {
   ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine 
 } from 'recharts';
 import { Logo } from './components/Logo';
-import { calculateVWAP, calculateEMA, Indicator, calculateSMA } from './utils/indicators';
+import { calculateVWAP, calculateEMA, Indicator, calculateSMA, calculateMACD, calculateRSI } from './utils/indicators';
 import { CandlestickBar } from './components/CandlestickBar';
 import { ChartTooltip } from './components/ChartTooltip';
 import { CHART_COLORS } from './constants/colors';
 import { formatPrice, formatVolume, formatDelta, formatPercent } from './utils/formatters';
 import { INDICATOR_DEFS } from './constants/indicators';
+import { MACDHistogramBar } from './components/MACDHistogramBar';
 
 type TimeFrame = '15m' | '1h' | '1d' | '1w';
 type ChartMode = 'candles' | 'lines' | 'both';
@@ -100,20 +101,31 @@ const indicatorCalculators: Record<Indicator, (candles: Candlestick[]) => number
   sma20: (candles) => calculateSMA(candles, 20),
   sma50: (candles) => calculateSMA(candles, 50),
   sma200: (candles) => calculateSMA(candles, 200),
+  macd: (candles) => calculateMACD(candles).map(v => v.macd),
+  rsi: (candles) => calculateRSI(candles),
 };
 
+// Add these calculations to the calculateIndicators function
 const calculateIndicators = (
   candles: Candlestick[],
   activeIndicators: Indicator[]
-): (Candlestick & { vwap?: number; ema9?: number; ema21?: number })[] => {
+): Candlestick[] => {
   if (candles.length === 0) return candles;
 
   return activeIndicators.reduce((candlesWithIndicators, indicator) => {
-    const values = indicatorCalculators[indicator](candles);
-    const offset = candlesWithIndicators.length - values.length;
-    values.forEach((value, i) => {
-      candlesWithIndicators[i + offset][indicator] = value;
-    });
+    if (indicator === 'macd') {
+      const macdValues = calculateMACD(candles);
+      macdValues.forEach(({ macd }, i) => {
+        candlesWithIndicators[i].macd = macd;
+      });
+    } else {
+      const values = indicatorCalculators[indicator](candles);
+      const offset = candlesWithIndicators.length - values.length;
+      values.forEach((value, i) => {
+        candlesWithIndicators[i + offset][indicator] = value;
+      });
+    }
+    
     return candlesWithIndicators;
   }, [...candles]);
 };
@@ -755,167 +767,243 @@ const AppContent = () => {
             ))}
           </Menu>
         </Box>
-        <Box sx={{ flexGrow: 1, minHeight: '400px' }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart 
-              data={calculateIndicators(getFilteredCandles(candles, timeFrame), indicators)}
-            >
-              <CartesianGrid 
-                strokeDasharray="3 3" 
-                stroke="rgba(128, 128, 128, 0.2)" 
-              />
-              <XAxis 
-                dataKey="timestamp"
-                tickFormatter={formatXAxisTick}
-                domain={getXAxisDomain()}
-                type="number"
-                scale="time"
-                interval={timeFrame === '1w' ? 24 : 'preserveStartEnd'}
-                minTickGap={50}
-              />
-              <YAxis 
-                domain={['auto', 'auto']} 
-                orientation="right"
-                tickFormatter={formatPrice}
-              />
-              <Tooltip content={<ChartTooltip />} />
-              {currentPriceValue && (
-                <ReferenceLine 
-                  y={currentPriceValue}
-                  stroke={isCurrentCandleBullish(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
-                  strokeDasharray="3 3"
-                  label={{
-                    value: formatPrice(currentPriceValue),
-                    position: 'right',
-                    fill: isCurrentCandleBullish(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown,
-                  }}
+        <Box sx={{ flexGrow: 1, minHeight: '400px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <Box sx={{ flexGrow: 1, minHeight: '60%' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={calculateIndicators(getFilteredCandles(candles, timeFrame), indicators)}>
+                <CartesianGrid 
+                  strokeDasharray="3 3" 
+                  stroke="rgba(128, 128, 128, 0.2)" 
                 />
-              )}
-              {(chartMode === 'candles' || chartMode === 'both') && (
-                <Bar
-                  dataKey={d => [d.low, d.high]}
-                  shape={<CandlestickBar maxVolume={Math.max(...candles.map(c => c.volume))} />}
-                  name="Range"
-                  isAnimationActive={false}
+                <XAxis 
+                  dataKey="timestamp"
+                  tickFormatter={formatXAxisTick}
+                  domain={getXAxisDomain()}
+                  type="number"
+                  scale="time"
+                  interval={timeFrame === '1w' ? 24 : 'preserveStartEnd'}
+                  minTickGap={50}
                 />
-              )}
-              {(chartMode === 'lines' || chartMode === 'both') && (
-                <>
-                  <Line
-                    type="linear"
-                    dataKey="open"
-                    stroke={CHART_COLORS.open}
-                    strokeWidth={1}
+                <YAxis 
+                  domain={['auto', 'auto']} 
+                  orientation="right"
+                  tickFormatter={formatPrice}
+                />
+                <Tooltip content={<ChartTooltip />} />
+                {currentPriceValue && (
+                  <ReferenceLine 
+                    y={currentPriceValue}
+                    stroke={isCurrentCandleBullish(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
                     strokeDasharray="3 3"
-                    dot={false}
-                    name="Open"
+                    label={{
+                      value: formatPrice(currentPriceValue),
+                      position: 'right',
+                      fill: isCurrentCandleBullish(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown,
+                    }}
+                  />
+                )}
+                {(chartMode === 'candles' || chartMode === 'both') && (
+                  <Bar
+                    dataKey={d => [d.low, d.high]}
+                    shape={<CandlestickBar maxVolume={Math.max(...candles.map(c => c.volume))} />}
+                    name="Range"
                     isAnimationActive={false}
                   />
+                )}
+                {(chartMode === 'lines' || chartMode === 'both') && (
+                  <>
+                    <Line
+                      type="linear"
+                      dataKey="open"
+                      stroke={CHART_COLORS.open}
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                      dot={false}
+                      name="Open"
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="linear"
+                      dataKey="high"
+                      stroke={CHART_COLORS.high}
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                      dot={false}
+                      name="High"
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="linear"
+                      dataKey="low"
+                      stroke={CHART_COLORS.low}
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                      dot={false}
+                      name="Low"
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="linear"
+                      dataKey="close"
+                      stroke={isPriceUp(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
+                      strokeWidth={3}
+                      dot={false}
+                      name="Close"
+                      isAnimationActive={false}
+                    />
+                  </>
+                )}
+                {indicators.includes('vwap') && (
                   <Line
-                    type="linear"
-                    dataKey="high"
-                    stroke={CHART_COLORS.high}
+                    key="vwap"
+                    type="monotone"
+                    dataKey="vwap"
+                    stroke={CHART_COLORS.vwap}
                     strokeWidth={1}
-                    strokeDasharray="3 3"
                     dot={false}
-                    name="High"
+                    name="VWAP"
                     isAnimationActive={false}
                   />
+                )}
+                {indicators.includes('ema9') && (
                   <Line
-                    type="linear"
-                    dataKey="low"
-                    stroke={CHART_COLORS.low}
+                    key="ema9"
+                    type="monotone"
+                    dataKey="ema9"
+                    stroke={CHART_COLORS.ema9}
                     strokeWidth={1}
-                    strokeDasharray="3 3"
                     dot={false}
-                    name="Low"
+                    name="EMA(9)"
                     isAnimationActive={false}
+                  />
+                )}
+                {indicators.includes('ema21') && (
+                  <Line
+                    key="ema21"
+                    type="monotone"
+                    dataKey="ema21"
+                    stroke={CHART_COLORS.ema21}
+                    strokeWidth={1}
+                    dot={false}
+                    name="EMA(21)"
+                    isAnimationActive={false}
+                  />
+                )}
+                {indicators.includes('sma20') && (
+                  <Line
+                    key="sma20"
+                    type="monotone"
+                    dataKey="sma20"
+                    stroke={CHART_COLORS.sma20}
+                    strokeWidth={1}
+                    dot={false}
+                    name="SMA(20)"
+                    isAnimationActive={false}
+                  />
+                )}
+                {indicators.includes('sma50') && (
+                  <Line
+                    key="sma50"
+                    type="monotone"
+                    dataKey="sma50"
+                    stroke={CHART_COLORS.sma50}
+                    strokeWidth={1}
+                    dot={false}
+                    name="SMA(50)"
+                    isAnimationActive={false}
+                  />
+                )}
+                {indicators.includes('sma200') && (
+                  <Line
+                    key="sma200"
+                    type="monotone"
+                    dataKey="sma200"
+                    stroke={CHART_COLORS.sma200}
+                    strokeWidth={1}
+                    dot={false}
+                    name="SMA(200)"
+                    isAnimationActive={false}
+                  />
+                )}
+              </ComposedChart>
+            </ResponsiveContainer>
+          </Box>
+          
+          {indicators.includes('macd') && (
+            <Box sx={{ height: '20%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart 
+                  data={calculateMACD(getFilteredCandles(candles, timeFrame))}
+                  margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="timestamp"
+                    tickFormatter={formatXAxisTick}
+                    domain={getXAxisDomain()}
+                    type="number"
+                    scale="time"
+                  />
+                  <YAxis orientation="right" />
+                  <Tooltip />
+                  <Bar
+                    dataKey="histogram"
+                    shape={<MACDHistogramBar />}
+                    name="MACD Histogram"
                   />
                   <Line
-                    type="linear"
-                    dataKey="close"
-                    stroke={isPriceUp(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
-                    strokeWidth={3}
+                    type="monotone"
+                    dataKey="macd"
+                    stroke={CHART_COLORS.macdLine}
+                    name="MACD"
                     dot={false}
-                    name="Close"
-                    isAnimationActive={false}
                   />
-                </>
-              )}
-              {indicators.includes('vwap') && (
-                <Line
-                  key="vwap"
-                  type="monotone"
-                  dataKey="vwap"
-                  stroke={CHART_COLORS.vwap}
-                  strokeWidth={1}
-                  dot={false}
-                  name="VWAP"
-                  isAnimationActive={false}
-                />
-              )}
-              {indicators.includes('ema9') && (
-                <Line
-                  key="ema9"
-                  type="monotone"
-                  dataKey="ema9"
-                  stroke={CHART_COLORS.ema9}
-                  strokeWidth={1}
-                  dot={false}
-                  name="EMA(9)"
-                  isAnimationActive={false}
-                />
-              )}
-              {indicators.includes('ema21') && (
-                <Line
-                  key="ema21"
-                  type="monotone"
-                  dataKey="ema21"
-                  stroke={CHART_COLORS.ema21}
-                  strokeWidth={1}
-                  dot={false}
-                  name="EMA(21)"
-                  isAnimationActive={false}
-                />
-              )}
-              {indicators.includes('sma20') && (
-                <Line
-                  key="sma20"
-                  type="monotone"
-                  dataKey="sma20"
-                  stroke={CHART_COLORS.sma20}
-                  strokeWidth={1}
-                  dot={false}
-                  name="SMA(20)"
-                  isAnimationActive={false}
-                />
-              )}
-              {indicators.includes('sma50') && (
-                <Line
-                  key="sma50"
-                  type="monotone"
-                  dataKey="sma50"
-                  stroke={CHART_COLORS.sma50}
-                  strokeWidth={1}
-                  dot={false}
-                  name="SMA(50)"
-                  isAnimationActive={false}
-                />
-              )}
-              {indicators.includes('sma200') && (
-                <Line
-                  key="sma200"
-                  type="monotone"
-                  dataKey="sma200"
-                  stroke={CHART_COLORS.sma200}
-                  strokeWidth={1}
-                  dot={false}
-                  name="SMA(200)"
-                  isAnimationActive={false}
-                />
-              )}
-            </ComposedChart>
-          </ResponsiveContainer>
+                  <Line
+                    type="monotone"
+                    dataKey="signal"
+                    stroke={CHART_COLORS.macdSignal}
+                    name="Signal"
+                    dot={false}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </Box>
+          )}
+          
+          {indicators.includes('rsi') && (
+            <Box sx={{ height: '20%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart 
+                  data={calculateIndicators(getFilteredCandles(candles, timeFrame), ['rsi'])}
+                  // margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="timestamp"
+                    tickFormatter={formatXAxisTick}
+                    domain={getXAxisDomain()}
+                    type="number"
+                    scale="time"
+                  />
+                  <YAxis 
+                    orientation="right" 
+                    domain={[0, 100]}
+                    ticks={[0, 30, 70, 100]}
+                  />
+                  <ReferenceLine y={30} stroke="rgba(255,0,0,0.3)" />
+                  <ReferenceLine y={70} stroke="rgba(255,0,0,0.3)" />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Line
+                    type="monotone"
+                    dataKey="rsi"
+                    stroke={CHART_COLORS.rsi}
+                    name="RSI"
+                    dot={false}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </Box>
+          )}
         </Box>
         <TableContainer 
           component={Paper} 

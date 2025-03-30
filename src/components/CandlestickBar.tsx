@@ -2,7 +2,7 @@ import { CHART_COLORS } from '../constants/colors';
 
 export const CandlestickBar = (props: any) => {
   const { x, y, width, height, payload, background } = props;
-  console.log('CandlestickBar props:', props);
+  // console.log('CandlestickBar props:', props);
   
   const isBullish = payload.close > payload.open;
   const color = isBullish ? CHART_COLORS.priceUp : CHART_COLORS.priceDown;
