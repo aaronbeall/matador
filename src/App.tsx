@@ -941,10 +941,7 @@ const AppContent = () => {
           {indicators.includes('macd') && (
             <Box sx={{ height: '20%' }}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart 
-                  data={calculateMACD(getFilteredCandles(candles, timeFrame))}
-                  margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                >
+                <ComposedChart data={calculateMACD(getFilteredCandles(candles, timeFrame))} >
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.2)" />
                   <XAxis 
                     dataKey="timestamp"
@@ -982,10 +979,7 @@ const AppContent = () => {
           {indicators.includes('rsi') && (
             <Box sx={{ height: '20%' }}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart 
-                  data={calculateIndicators(getFilteredCandles(candles, timeFrame), ['rsi'])}
-                  // margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
-                >
+                <ComposedChart data={calculateIndicators(getFilteredCandles(candles, timeFrame), ['rsi'])} >
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.2)" />
                   <XAxis 
                     dataKey="timestamp"
