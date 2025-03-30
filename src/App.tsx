@@ -205,14 +205,17 @@ const AppContent = () => {
     setIsLoading(false);
   }, [symbol]);
 
-  const generateHistoricalCandles = useCallback((basePrice: number, hours: number = 1) => {
+  const generateHistoricalCandles = useCallback((basePrice: number, hours: number = 3) => {
     const now = Date.now();
     const data: Trade[] = [];
     let currentPrice = basePrice;
     
-    // Generate one hour of minute data
-    for (let i = hours * 60; i >= 0; i--) {
-      const minuteTimestamp = now - (i * 60 * 1000); // step back by minutes
+    // Start from the beginning of the current minute
+    const currentMinute = Math.floor(now / 60000) * 60000;
+    
+    // Generate historical minute data, starting from current minute and going backwards
+    for (let i = 1; i <= hours * 60; i++) {
+      const minuteTimestamp = currentMinute - (i * 60 * 1000);
       const volatility = currentPrice * 0.0002;
       
       // Generate 50-150 trades for this minute
