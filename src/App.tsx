@@ -39,6 +39,8 @@ import {
   CandlestickChart as CandleChartIcon,
   Timer as TimerIcon,
   DateRange as DateRangeIcon,
+  ArrowDropUp as ArrowUpIcon,
+  ArrowDropDown as ArrowDownIcon,
 } from '@mui/icons-material';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { WebSocketManager } from './services/WebSocketManager';
@@ -56,7 +58,7 @@ const CHART_COLORS = {
   open: '#2196f3',
   high: '#4caf50',
   low: '#f44336',
-  close: '#9c27b0',
+  close: '#4caf50', // Changed from #9c27b0 to match priceUp
   volume: '#ff9800',
   bar: 'rgba(128, 128, 128, 0.2)',
   priceUp: '#4caf50',
@@ -118,7 +120,38 @@ const formatVolume = (volume: number) => {
   return volume.toLocaleString();
 };
 
-const formatPrice = (price: number) => `$${price.toFixed(2)}`;
+const formatPrice = (price: number) => 
+  `${price < 0 ? '-' : ''}$${Math.abs(price).toFixed(2)}`;
+
+const formatPercent = (num: number) => `${num.toFixed(2)}%`;
+
+const formatDelta = <T extends (n: number) => string>(
+  value: number,
+  formatter: T
+) => `${value >= 0 ? '+' : ''}${formatter(value)}`;
+
+const getTimeFrameMs = (timeFrame: TimeFrame) => 
+  timeFrame === '15m' ? 15 * 60 * 1000 :
+  timeFrame === '1h' ? 60 * 60 * 1000 :
+  timeFrame === '1d' ? 24 * 60 * 60 * 1000 :
+  7 * 24 * 60 * 60 * 1000;
+
+const getFilteredCandles = (candles: CandleStick[], timeFrame: TimeFrame) => {
+  const now = Date.now();
+  return candles.filter(c => c.timestamp > now - getTimeFrameMs(timeFrame));
+};
+
+const calculateChanges = (candles: CandleStick[], timeFrame: TimeFrame) => {
+  const filteredCandles = getFilteredCandles(candles, timeFrame);
+  if (filteredCandles.length < 2) return { delta: 0, percent: 0 };
+  
+  const first = filteredCandles[0];
+  const last = filteredCandles[filteredCandles.length - 1];
+  const delta = last.close - first.open;
+  const percent = (delta / first.open) * 100;
+  
+  return { delta, percent };
+};
 
 const ChartTooltip = ({ active, payload, label }: TooltipProps<number, string>) => {
   const { isDarkMode } = useTheme();
@@ -462,26 +495,17 @@ const AppContent = () => {
 
   const getXAxisDomain = useCallback(() => {
     const now = Date.now();
-    const timeFrameMs = timeFrame === '15m' ? 15 * 60 * 1000 :
-                       timeFrame === '1h' ? 60 * 60 * 1000 :
-                       timeFrame === '1d' ? 24 * 60 * 60 * 1000 :
-                       7 * 24 * 60 * 60 * 1000;
-    return [now - timeFrameMs, now] as [number, number];
+    return [now - getTimeFrameMs(timeFrame), now] as [number, number];
   }, [timeFrame]);
 
-  const getFilteredCandles = useCallback((candles: CandleStick[]) => {
-    const [start] = getXAxisDomain();
-    return candles.filter(c => c.timestamp > start);
-  }, [getXAxisDomain]);
-
   const isPriceUp = useCallback((candles: CandleStick[]) => {
-    const filteredCandles = getFilteredCandles(candles);
+    const filteredCandles = getFilteredCandles(candles, timeFrame);
     if (filteredCandles.length < 2) return true;
     
     const first = filteredCandles[0];
     const last = filteredCandles[filteredCandles.length - 1];
     return last.close >= first.open;
-  }, [getFilteredCandles]);
+  }, [timeFrame]);
 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -627,10 +651,46 @@ const AppContent = () => {
               onMouseEnter={() => setIsPriceHovered(true)}
               onMouseLeave={() => setIsPriceHovered(false)}
             >
-              <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
+              <Typography 
+                variant="h5" 
+                sx={{ 
+                  fontWeight: 'bold',
+                  color: isPriceUp(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                }}
+              >
                 {formatPrice(currentPriceValue)}
+                {candles.length > 0 && (
+                  <>
+                    {(() => {
+                      const { delta } = calculateChanges(candles, timeFrame);
+                      return delta >= 0 ? (
+                        <ArrowUpIcon sx={{ color: CHART_COLORS.priceUp }} />
+                      ) : (
+                        <ArrowDownIcon sx={{ color: CHART_COLORS.priceDown }} />
+                      );
+                    })()}
+                    <Typography 
+                      component="span" 
+                      sx={{ 
+                        fontSize: '0.8em',
+                        color: theme => {
+                          const { delta } = calculateChanges(candles, timeFrame);
+                          return delta >= 0 ? CHART_COLORS.priceUp : CHART_COLORS.priceDown;
+                        }
+                      }}
+                    >
+                      {(() => {
+                        const { delta, percent } = calculateChanges(candles, timeFrame);
+                        return `${formatDelta(delta, formatPrice)} (${formatDelta(percent, formatPercent)})`;
+                      })()}
+                    </Typography>
+                  </>
+                )}
               </Typography>
-              {!wsEnabled && (
+              {!wsEnabled && !dummyEnabled && (
                 <IconButton 
                   className="refresh-button"
                   size="small" 
@@ -699,7 +759,7 @@ const AppContent = () => {
         </Box>
         <Box sx={{ flexGrow: 1, minHeight: '400px' }}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={getFilteredCandles(candles)}>
+            <ComposedChart data={getFilteredCandles(candles, timeFrame)}>
               <CartesianGrid 
                 strokeDasharray="3 3" 
                 stroke="rgba(128, 128, 128, 0.2)" 
