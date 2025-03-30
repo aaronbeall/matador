@@ -507,6 +507,19 @@ const AppContent = () => {
     return last.close >= first.open;
   }, [timeFrame]);
 
+  const isPriceUpFromLast = useCallback((candles: CandleStick[]) => {
+    if (candles.length < 2) return true;
+    const lastCandle = candles[candles.length - 1];
+    const prevCandle = candles[candles.length - 2];
+    return lastCandle.close >= prevCandle.close;
+  }, []);
+
+  const isCurrentCandleBullish = useCallback((candles: CandleStick[]) => {
+    if (!candles.length) return true;
+    const currentCandle = candles[candles.length - 1];
+    return currentCandle.close >= currentCandle.open;
+  }, []);
+
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppBar position="static">
@@ -790,12 +803,12 @@ const AppContent = () => {
               {currentPriceValue && (
                 <ReferenceLine 
                   y={currentPriceValue}
-                  stroke={isPriceUp(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
+                  stroke={isCurrentCandleBullish(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
                   strokeDasharray="3 3"
                   label={{
                     value: formatPrice(currentPriceValue),
                     position: 'right',
-                    fill: isPriceUp(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown,
+                    fill: isCurrentCandleBullish(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown,
                   }}
                 />
               )}
