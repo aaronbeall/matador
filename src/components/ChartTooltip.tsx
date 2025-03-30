@@ -4,13 +4,18 @@ import { useTheme } from '../theme/ThemeContext';
 import { CHART_COLORS } from '../constants/colors';
 import { formatPrice, formatVolume } from '../utils/formatters';
 import { Candlestick } from '../types/Candlestick';
+import { Indicator } from '../utils/indicators';
+import React from 'react';
 
 export const ChartTooltip = ({ active, payload, label }: TooltipProps<number, string>) => {
   const { isDarkMode } = useTheme();
   if (!active || !payload?.[0]?.payload) return null;
   
   const candle = payload[0].payload as Candlestick;
-  
+  const indicators = ['vwap', 'ema9', 'ema21'].filter(
+    (indicator): indicator is Indicator => indicator in candle
+  );
+
   return (
     <Box
       sx={{
@@ -42,6 +47,31 @@ export const ChartTooltip = ({ active, payload, label }: TooltipProps<number, st
         <span style={{ color: CHART_COLORS.close }}>C:</span><span>{formatPrice(candle.close)}</span>
         <span style={{ color: CHART_COLORS.volume }}>V:</span><span>{formatVolume(candle.volume)}</span>
       </Box>
+      {indicators.length > 0 && (
+        <>
+          <Box sx={{ 
+            my: 1, 
+            height: '1px', 
+            bgcolor: 'divider',
+            mx: -1.5,
+          }} />
+          <Box sx={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'auto auto',
+            gap: 0.5,
+            color: 'text.primary',
+          }}>
+            {indicators.map((indicator) => (
+              <React.Fragment key={indicator}>
+                <span style={{ color: CHART_COLORS[indicator] }}>
+                  {indicator.toUpperCase()}:
+                </span>
+                <span>{formatPrice(candle[indicator] ?? 0)}</span>
+              </React.Fragment>
+            ))}
+          </Box>
+        </>
+      )}
     </Box>
   );
 };
