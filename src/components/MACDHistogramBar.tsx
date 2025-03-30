@@ -17,7 +17,7 @@ export const MACDHistogramBar = ({ x, y, width, height, value }: MACDHistogramBa
       x={x}
       y={y}
       width={width}
-      height={height}
+      height={Math.abs(height) < 1 ? Math.sign(height) : height}
       fill={value >= 0 ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
       opacity={0.5}
     />

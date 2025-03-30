@@ -67,7 +67,7 @@ import { INDICATOR_DEFS } from './constants/indicators';
 import { MACDHistogramBar } from './components/MACDHistogramBar';
 import { MACDTooltip } from './components/MACDTooltip';
 
-type TimeFrame = '15m' | '1h' | '1d' | '1w';
+type TimeFrame = '15m' | '1h' | '3h' | '6h' | '1d' | '1w';
 type ChartMode = 'candles' | 'lines' | 'both';
 
 const FINHUB_API_KEY = import.meta.env.VITE_FINHUB_API_KEY;
@@ -75,6 +75,8 @@ const FINHUB_API_KEY = import.meta.env.VITE_FINHUB_API_KEY;
 const getTimeFrameMs = (timeFrame: TimeFrame) => 
   timeFrame === '15m' ? 15 * 60 * 1000 :
   timeFrame === '1h' ? 60 * 60 * 1000 :
+  timeFrame === '3h' ? 3 * 60 * 60 * 1000 :
+  timeFrame === '6h' ? 6 * 60 * 60 * 1000 :
   timeFrame === '1d' ? 24 * 60 * 60 * 1000 :
   7 * 24 * 60 * 60 * 1000;
 
@@ -724,6 +726,8 @@ const AppContent = () => {
             >
               <ToggleButton value="15m">15M</ToggleButton>
               <ToggleButton value="1h">1H</ToggleButton>
+              <ToggleButton value="3h">3H</ToggleButton>
+              <ToggleButton value="6h">6H</ToggleButton>
               <ToggleButton value="1d">1D</ToggleButton>
               <ToggleButton value="1w">1W</ToggleButton>
             </ToggleButtonGroup>
@@ -941,7 +945,7 @@ const AppContent = () => {
                   data={calculateMACD(getFilteredCandles(candles, timeFrame))}
                   margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.2)" />
                   <XAxis 
                     dataKey="timestamp"
                     tickFormatter={formatXAxisTick}
@@ -982,7 +986,7 @@ const AppContent = () => {
                   data={calculateIndicators(getFilteredCandles(candles, timeFrame), ['rsi'])}
                   // margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.2)" />
                   <XAxis 
                     dataKey="timestamp"
                     tickFormatter={formatXAxisTick}
