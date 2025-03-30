@@ -1,5 +1,5 @@
+import { Candlestick, TimeInterval } from '../types/Candlestick';
 import { Trade } from '../types/Trade';
-import { CandleStick, TimeInterval } from '../types/CandleStick';
 
 export class CandleStore {
   private trades: Trade[] = [];
@@ -17,9 +17,9 @@ export class CandleStore {
     this.trades = this.trades.filter(t => t.timestamp >= oneDayAgo);
   }
 
-  getCandles(timeInterval: TimeInterval): CandleStick[] {
+  getCandles(timeInterval: TimeInterval): Candlestick[] {
     const interval = this.timeIntervalMs[timeInterval];
-    const candles: Map<number, CandleStick> = new Map();
+    const candles: Map<number, Candlestick> = new Map();
 
     this.trades.forEach(trade => {
       const candleTimestamp = Math.floor(trade.timestamp / interval) * interval;

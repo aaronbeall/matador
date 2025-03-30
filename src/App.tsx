@@ -27,6 +27,10 @@ import {
   TableRow,
   Paper,
   Tooltip as MuiTooltip,
+  Menu,
+  MenuItem,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material';
 import { 
   Brightness4, 
@@ -41,18 +45,20 @@ import {
   DateRange as DateRangeIcon,
   ArrowDropUp as ArrowUpIcon,
   ArrowDropDown as ArrowDownIcon,
+  Settings as SettingsIcon,
 } from '@mui/icons-material';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { WebSocketManager } from './services/WebSocketManager';
 import { Trade } from './types/Trade';
 import { CandleStore } from './services/CandleStore';
-import { CandleStick, TimeInterval } from './types/CandleStick';
+import { Candlestick, TimeInterval } from './types/Candlestick';
 import { styled } from '@mui/material/styles';
 import { TooltipProps } from 'recharts';
 import { 
   ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine 
 } from 'recharts';
 import { Logo } from './components/Logo';
+import { calculateVWAP, calculateEMA, Indicator } from './utils/indicators';
 
 const CHART_COLORS = {
   open: '#2196f3',
@@ -63,9 +69,12 @@ const CHART_COLORS = {
   bar: 'rgba(128, 128, 128, 0.2)',
   priceUp: '#4caf50',
   priceDown: '#f44336',
+  vwap: '#ff00ff',
+  ema9: '#ffeb3b',
+  ema21: '#ff9800',
 } as const;
 
-const CandleStickBar = (props: any) => {
+const CandlestickBar = (props: any) => {
   const { x, y, width, height, payload } = props;
   
   const isBullish = payload.close > payload.open;
@@ -136,12 +145,12 @@ const getTimeFrameMs = (timeFrame: TimeFrame) =>
   timeFrame === '1d' ? 24 * 60 * 60 * 1000 :
   7 * 24 * 60 * 60 * 1000;
 
-const getFilteredCandles = (candles: CandleStick[], timeFrame: TimeFrame) => {
+const getFilteredCandles = (candles: Candlestick[], timeFrame: TimeFrame) => {
   const now = Date.now();
   return candles.filter(c => c.timestamp > now - getTimeFrameMs(timeFrame));
 };
 
-const calculateChanges = (candles: CandleStick[], timeFrame: TimeFrame) => {
+const calculateChanges = (candles: Candlestick[], timeFrame: TimeFrame) => {
   const filteredCandles = getFilteredCandles(candles, timeFrame);
   if (filteredCandles.length < 2) return { delta: 0, percent: 0 };
   
@@ -157,7 +166,7 @@ const ChartTooltip = ({ active, payload, label }: TooltipProps<number, string>) 
   const { isDarkMode } = useTheme();
   if (!active || !payload?.[0]?.payload) return null;
   
-  const candle = payload[0].payload as CandleStick;
+  const candle = payload[0].payload as Candlestick;
   
   return (
     <Box
@@ -194,6 +203,28 @@ const ChartTooltip = ({ active, payload, label }: TooltipProps<number, string>) 
   );
 };
 
+const indicatorCalculators: Record<Indicator, (candles: Candlestick[]) => number[]> = {
+  vwap: calculateVWAP,
+  ema9: (candles) => calculateEMA(candles, 9),
+  ema21: (candles) => calculateEMA(candles, 21),
+};
+
+const calculateIndicators = (
+  candles: Candlestick[],
+  activeIndicators: Indicator[]
+): (Candlestick & { vwap?: number; ema9?: number; ema21?: number })[] => {
+  if (candles.length === 0) return candles;
+
+  return activeIndicators.reduce((candlesWithIndicators, indicator) => {
+    const values = indicatorCalculators[indicator](candles);
+    const offset = candlesWithIndicators.length - values.length;
+    values.forEach((value, i) => {
+      candlesWithIndicators[i + offset][indicator] = value;
+    });
+    return candlesWithIndicators;
+  }, [...candles]);
+};
+
 const AppContent = () => {
   const [symbol, setSymbol] = useState('QQQ');
   const { isDarkMode, toggleTheme } = useTheme();
@@ -215,7 +246,9 @@ const AppContent = () => {
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('1h');
   const [chartMode, setChartMode] = useState<ChartMode>('candles');
   const candleStore = useRef(new CandleStore());
-  const [candles, setCandles] = useState<CandleStick[]>([]);
+  const [candles, setCandles] = useState<Candlestick[]>([]);
+  const [indicators, setIndicators] = useState<Indicator[]>([]);
+  const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
 
   const wsManager = useRef<WebSocketManager | null>(null);
   const [wsEnabled, setWsEnabled] = useState(false);
@@ -470,6 +503,14 @@ const AppContent = () => {
     }
   }, [currentPrice, generateHistoricalCandles, timeInterval]);
 
+  const handleIndicatorChange = (indicator: Indicator) => {
+    setIndicators(prev => 
+      prev.includes(indicator) 
+        ? prev.filter(i => i !== indicator)
+        : [...prev, indicator]
+    );
+  };
+
   const currentPriceValue = wsEnabled ? trade?.price : currentPrice;
 
   const StyledTableCell = styled(TableCell)(({ theme }) => ({
@@ -498,7 +539,7 @@ const AppContent = () => {
     return [now - getTimeFrameMs(timeFrame), now] as [number, number];
   }, [timeFrame]);
 
-  const isPriceUp = useCallback((candles: CandleStick[]) => {
+  const isPriceUp = useCallback((candles: Candlestick[]) => {
     const filteredCandles = getFilteredCandles(candles, timeFrame);
     if (filteredCandles.length < 2) return true;
     
@@ -507,14 +548,14 @@ const AppContent = () => {
     return last.close >= first.open;
   }, [timeFrame]);
 
-  const isPriceUpFromLast = useCallback((candles: CandleStick[]) => {
+  const isPriceUpFromLast = useCallback((candles: Candlestick[]) => {
     if (candles.length < 2) return true;
     const lastCandle = candles[candles.length - 1];
     const prevCandle = candles[candles.length - 2];
     return lastCandle.close >= prevCandle.close;
   }, []);
 
-  const isCurrentCandleBullish = useCallback((candles: CandleStick[]) => {
+  const isCurrentCandleBullish = useCallback((candles: Candlestick[]) => {
     if (!candles.length) return true;
     const currentCandle = candles[candles.length - 1];
     return currentCandle.close >= currentCandle.open;
@@ -777,10 +818,56 @@ const AppContent = () => {
               <ToggleButton value="1w">1W</ToggleButton>
             </ToggleButtonGroup>
           </Box>
+          <MuiTooltip title="Indicators">
+            <IconButton size="small" onClick={(e) => setMenuAnchor(e.currentTarget)}>
+              <SettingsIcon />
+            </IconButton>
+          </MuiTooltip>
+          <Menu
+            anchorEl={menuAnchor}
+            open={Boolean(menuAnchor)}
+            onClose={() => setMenuAnchor(null)}
+          >
+            <MenuItem>
+              <FormControlLabel
+                control={
+                  <Checkbox 
+                    checked={indicators.includes('vwap')}
+                    onChange={() => handleIndicatorChange('vwap')}
+                  />
+                }
+                label="VWAP"
+              />
+            </MenuItem>
+            <MenuItem>
+              <FormControlLabel
+                control={
+                  <Checkbox 
+                    checked={indicators.includes('ema9')}
+                    onChange={() => handleIndicatorChange('ema9')}
+                  />
+                }
+                label="EMA(9)"
+              />
+            </MenuItem>
+            <MenuItem>
+              <FormControlLabel
+                control={
+                  <Checkbox 
+                    checked={indicators.includes('ema21')}
+                    onChange={() => handleIndicatorChange('ema21')}
+                  />
+                }
+                label="EMA(21)"
+              />
+            </MenuItem>
+          </Menu>
         </Box>
         <Box sx={{ flexGrow: 1, minHeight: '400px' }}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={getFilteredCandles(candles, timeFrame)}>
+            <ComposedChart 
+              data={calculateIndicators(getFilteredCandles(candles, timeFrame), indicators)}
+            >
               <CartesianGrid 
                 strokeDasharray="3 3" 
                 stroke="rgba(128, 128, 128, 0.2)" 
@@ -815,7 +902,7 @@ const AppContent = () => {
               {(chartMode === 'candles' || chartMode === 'both') && (
                 <Bar
                   dataKey={d => [d.low, d.high]}
-                  shape={<CandleStickBar />}
+                  shape={<CandlestickBar />}
                   name="Range"
                   isAnimationActive={false}
                 />
@@ -862,6 +949,42 @@ const AppContent = () => {
                     isAnimationActive={false}
                   />
                 </>
+              )}
+              {indicators.includes('vwap') && (
+                <Line
+                  key="vwap"
+                  type="monotone"
+                  dataKey="vwap"
+                  stroke={CHART_COLORS.vwap}
+                  strokeWidth={1}
+                  dot={false}
+                  name="VWAP"
+                  isAnimationActive={false}
+                />
+              )}
+              {indicators.includes('ema9') && (
+                <Line
+                  key="ema9"
+                  type="monotone"
+                  dataKey="ema9"
+                  stroke={CHART_COLORS.ema9}
+                  strokeWidth={1}
+                  dot={false}
+                  name="EMA(9)"
+                  isAnimationActive={false}
+                />
+              )}
+              {indicators.includes('ema21') && (
+                <Line
+                  key="ema21"
+                  type="monotone"
+                  dataKey="ema21"
+                  stroke={CHART_COLORS.ema21}
+                  strokeWidth={1}
+                  dot={false}
+                  name="EMA(21)"
+                  isAnimationActive={false}
+                />
               )}
             </ComposedChart>
           </ResponsiveContainer>
