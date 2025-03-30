@@ -58,7 +58,7 @@ import {
   ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine 
 } from 'recharts';
 import { Logo } from './components/Logo';
-import { calculateVWAP, calculateEMA, Indicator } from './utils/indicators';
+import { calculateVWAP, calculateEMA, Indicator, calculateSMA } from './utils/indicators';
 import { CandlestickBar } from './components/CandlestickBar';
 import { ChartTooltip } from './components/ChartTooltip';
 import { CHART_COLORS } from './constants/colors';
@@ -96,6 +96,9 @@ const indicatorCalculators: Record<Indicator, (candles: Candlestick[]) => number
   vwap: calculateVWAP,
   ema9: (candles) => calculateEMA(candles, 9),
   ema21: (candles) => calculateEMA(candles, 21),
+  sma20: (candles) => calculateSMA(candles, 20),
+  sma50: (candles) => calculateSMA(candles, 50),
+  sma200: (candles) => calculateSMA(candles, 200),
 };
 
 const calculateIndicators = (
@@ -717,39 +720,33 @@ const AppContent = () => {
             open={Boolean(menuAnchor)}
             onClose={() => setMenuAnchor(null)}
           >
-            <MenuItem>
-              <FormControlLabel
-                control={
-                  <Checkbox 
-                    checked={indicators.includes('vwap')}
-                    onChange={() => handleIndicatorChange('vwap')}
-                  />
-                }
-                label="VWAP"
-              />
-            </MenuItem>
-            <MenuItem>
-              <FormControlLabel
-                control={
-                  <Checkbox 
-                    checked={indicators.includes('ema9')}
-                    onChange={() => handleIndicatorChange('ema9')}
-                  />
-                }
-                label="EMA(9)"
-              />
-            </MenuItem>
-            <MenuItem>
-              <FormControlLabel
-                control={
-                  <Checkbox 
-                    checked={indicators.includes('ema21')}
-                    onChange={() => handleIndicatorChange('ema21')}
-                  />
-                }
-                label="EMA(21)"
-              />
-            </MenuItem>
+            {(['vwap', 'ema9', 'ema21', 'sma20', 'sma50', 'sma200'] as const).map(indicator => (
+              <MenuItem key={indicator}>
+                <FormControlLabel
+                  control={
+                    <Checkbox 
+                      checked={indicators.includes(indicator)}
+                      onChange={() => handleIndicatorChange(indicator)}
+                    />
+                  }
+                  label={
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box
+                        sx={{
+                          width: 12,
+                          height: 12,
+                          borderRadius: '50%',
+                          bgcolor: CHART_COLORS[indicator],
+                        }}
+                      />
+                      {indicator === 'vwap' ? 'VWAP' : 
+                        indicator.startsWith('ema') ? `EMA(${indicator.slice(3)})` :
+                        `SMA(${indicator.slice(3)})`}
+                    </Box>
+                  }
+                />
+              </MenuItem>
+            ))}
           </Menu>
         </Box>
         <Box sx={{ flexGrow: 1, minHeight: '400px' }}>
@@ -872,6 +869,42 @@ const AppContent = () => {
                   strokeWidth={1}
                   dot={false}
                   name="EMA(21)"
+                  isAnimationActive={false}
+                />
+              )}
+              {indicators.includes('sma20') && (
+                <Line
+                  key="sma20"
+                  type="monotone"
+                  dataKey="sma20"
+                  stroke={CHART_COLORS.sma20}
+                  strokeWidth={1}
+                  dot={false}
+                  name="SMA(20)"
+                  isAnimationActive={false}
+                />
+              )}
+              {indicators.includes('sma50') && (
+                <Line
+                  key="sma50"
+                  type="monotone"
+                  dataKey="sma50"
+                  stroke={CHART_COLORS.sma50}
+                  strokeWidth={1}
+                  dot={false}
+                  name="SMA(50)"
+                  isAnimationActive={false}
+                />
+              )}
+              {indicators.includes('sma200') && (
+                <Line
+                  key="sma200"
+                  type="monotone"
+                  dataKey="sma200"
+                  stroke={CHART_COLORS.sma200}
+                  strokeWidth={1}
+                  dot={false}
+                  name="SMA(200)"
                   isAnimationActive={false}
                 />
               )}

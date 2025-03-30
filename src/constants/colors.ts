@@ -10,4 +10,7 @@ export const CHART_COLORS = {
   vwap: '#ff00ff',
   ema9: '#ffeb3b',
   ema21: '#ff9800',
+  sma20: '#9c27b0',   // Purple
+  sma50: '#3f51b5',   // Indigo
+  sma200: '#607d8b',  // Blue Grey
 } as const;
