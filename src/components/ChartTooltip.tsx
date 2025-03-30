@@ -42,11 +42,11 @@ export const ChartTooltip = ({ active, payload, label }: TooltipProps<number, st
         mt: 0.5,
         color: 'text.primary',
       }}>
-        <span style={{ color: CHART_COLORS.open }}>O:</span><span>{formatPrice(candle.open)}</span>
-        <span style={{ color: CHART_COLORS.high }}>H:</span><span>{formatPrice(candle.high)}</span>
-        <span style={{ color: CHART_COLORS.low }}>L:</span><span>{formatPrice(candle.low)}</span>
-        <span style={{ color: CHART_COLORS.close }}>C:</span><span>{formatPrice(candle.close)}</span>
-        <span style={{ color: CHART_COLORS.volume }}>V:</span><span>{formatVolume(candle.volume)}</span>
+        <span style={{ color: CHART_COLORS.open }}>Open:</span><span>{formatPrice(candle.open)}</span>
+        <span style={{ color: CHART_COLORS.high }}>High:</span><span>{formatPrice(candle.high)}</span>
+        <span style={{ color: CHART_COLORS.low }}>Low:</span><span>{formatPrice(candle.low)}</span>
+        <span style={{ color: CHART_COLORS.close }}>Close:</span><span>{formatPrice(candle.close)}</span>
+        <span style={{ color: CHART_COLORS.volume }}>Volume:</span><span>{formatVolume(candle.volume)}</span>
       </Box>
       {indicators.length > 0 && (
         <>
