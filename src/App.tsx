@@ -469,12 +469,19 @@ const AppContent = () => {
     return [now - timeFrameMs, now] as [number, number];
   }, [timeFrame]);
 
+  const getFilteredCandles = useCallback((candles: CandleStick[]) => {
+    const [start] = getXAxisDomain();
+    return candles.filter(c => c.timestamp > start);
+  }, [getXAxisDomain]);
+
   const isPriceUp = useCallback((candles: CandleStick[]) => {
-    if (candles.length < 2) return true;
-    const first = candles[0];
-    const last = candles[candles.length - 1];
+    const filteredCandles = getFilteredCandles(candles);
+    if (filteredCandles.length < 2) return true;
+    
+    const first = filteredCandles[0];
+    const last = filteredCandles[filteredCandles.length - 1];
     return last.close >= first.open;
-  }, []);
+  }, [getFilteredCandles]);
 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -692,10 +699,7 @@ const AppContent = () => {
         </Box>
         <Box sx={{ flexGrow: 1, minHeight: '400px' }}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={candles.filter(candle => {
-              const [start] = getXAxisDomain();
-              return candle.timestamp > start;
-            })}>
+            <ComposedChart data={getFilteredCandles(candles)}>
               <CartesianGrid 
                 strokeDasharray="3 3" 
                 stroke="rgba(128, 128, 128, 0.2)" 
