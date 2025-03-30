@@ -26,6 +26,7 @@ import {
   TableHead,
   TableRow,
   Paper,
+  Tooltip as MuiTooltip,
 } from '@mui/material';
 import { 
   Brightness4, 
@@ -36,6 +37,8 @@ import {
   Refresh as RefreshIcon,
   ShowChart as LineChartIcon,
   CandlestickChart as CandleChartIcon,
+  Timer as TimerIcon,
+  DateRange as DateRangeIcon,
 } from '@mui/icons-material';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { WebSocketManager } from './services/WebSocketManager';
@@ -636,23 +639,28 @@ const AppContent = () => {
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="body2" color="text.secondary">Chart:</Typography>
             <ToggleButtonGroup
               value={chartMode}
               exclusive
               onChange={(_, newMode) => newMode && setChartMode(newMode)}
               size="small"
             >
-              <ToggleButton value="candles">
-                <CandleChartIcon />
-              </ToggleButton>
-              <ToggleButton value="lines">
-                <LineChartIcon />
-              </ToggleButton>
+              <MuiTooltip title="Candle Chart">
+                <ToggleButton value="candles">
+                  <CandleChartIcon />
+                </ToggleButton>
+              </MuiTooltip>
+              <MuiTooltip title="Line Chart">
+                <ToggleButton value="lines">
+                  <LineChartIcon />
+                </ToggleButton>
+              </MuiTooltip>
             </ToggleButtonGroup>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="body2" color="text.secondary">Interval:</Typography>
+            <MuiTooltip title="Candle Interval">
+              <TimerIcon sx={{ color: 'text.secondary' }} />
+            </MuiTooltip>
             <ToggleButtonGroup
               value={timeInterval}
               exclusive
@@ -666,7 +674,9 @@ const AppContent = () => {
             </ToggleButtonGroup>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="body2" color="text.secondary">Time Frame:</Typography>
+            <MuiTooltip title="Display Range">
+              <DateRangeIcon sx={{ color: 'text.secondary' }} />
+            </MuiTooltip>
             <ToggleButtonGroup
               value={timeFrame}
               exclusive
