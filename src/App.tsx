@@ -65,6 +65,7 @@ import { CHART_COLORS } from './constants/colors';
 import { formatPrice, formatVolume, formatDelta, formatPercent } from './utils/formatters';
 import { INDICATOR_DEFS } from './constants/indicators';
 import { MACDHistogramBar } from './components/MACDHistogramBar';
+import { MACDTooltip } from './components/MACDTooltip';
 
 type TimeFrame = '15m' | '1h' | '1d' | '1w';
 type ChartMode = 'candles' | 'lines' | 'both';
@@ -115,8 +116,9 @@ const calculateIndicators = (
   return activeIndicators.reduce((candlesWithIndicators, indicator) => {
     if (indicator === 'macd') {
       const macdValues = calculateMACD(candles);
+      const offset = candlesWithIndicators.length - macdValues.length;
       macdValues.forEach(({ macd }, i) => {
-        candlesWithIndicators[i].macd = macd;
+        candlesWithIndicators[i + offset].macd = macd;
       });
     } else {
       const values = indicatorCalculators[indicator](candles);
@@ -945,7 +947,7 @@ const AppContent = () => {
                     scale="time"
                   />
                   <YAxis orientation="right" />
-                  <Tooltip />
+                  <Tooltip content={<MACDTooltip />} />
                   <Bar
                     dataKey="histogram"
                     shape={<MACDHistogramBar />}

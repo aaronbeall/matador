@@ -15,8 +15,6 @@ export const CHART_COLORS = {
   sma200: '#607d8b',  // Blue Grey
   macdLine: '#2196f3',
   macdSignal: '#ff9800',
-  macdHistogramUp: '#4caf50',    // for positive histogram
-  macdHistogramDown: '#f44336',  // for negative histogram
   macd: '#2196f3',              // plain MACD color
   rsi: '#e91e63'
-} as const;
+};

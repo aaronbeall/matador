@@ -18,7 +18,7 @@ export const MACDHistogramBar = ({ x, y, width, height, value }: MACDHistogramBa
       y={y}
       width={width}
       height={height}
-      fill={value >= 0 ? CHART_COLORS.macdHistogramUp : CHART_COLORS.macdHistogramDown}
+      fill={value >= 0 ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
       opacity={0.5}
     />
   );
