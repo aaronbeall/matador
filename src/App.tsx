@@ -794,7 +794,7 @@ const AppContent = () => {
               {(chartMode === 'candles' || chartMode === 'both') && (
                 <Bar
                   dataKey={d => [d.low, d.high]}
-                  shape={<CandlestickBar />}
+                  shape={<CandlestickBar maxVolume={Math.max(...candles.map(c => c.volume))} />}
                   name="Range"
                   isAnimationActive={false}
                 />
