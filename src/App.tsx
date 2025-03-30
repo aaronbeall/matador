@@ -804,6 +804,7 @@ const AppContent = () => {
                   dataKey={d => [d.low, d.high]}
                   shape={<CandleStickBar />}
                   name="Range"
+                  isAnimationActive={false}
                 />
               )}
               {(chartMode === 'lines' || chartMode === 'both') && (
@@ -816,6 +817,7 @@ const AppContent = () => {
                     strokeDasharray="3 3"
                     dot={false}
                     name="Open"
+                    isAnimationActive={false}
                   />
                   <Line
                     type="linear"
@@ -825,6 +827,7 @@ const AppContent = () => {
                     strokeDasharray="3 3"
                     dot={false}
                     name="High"
+                    isAnimationActive={false}
                   />
                   <Line
                     type="linear"
@@ -834,6 +837,7 @@ const AppContent = () => {
                     strokeDasharray="3 3"
                     dot={false}
                     name="Low"
+                    isAnimationActive={false}
                   />
                   <Line
                     type="linear"
@@ -842,6 +846,7 @@ const AppContent = () => {
                     strokeWidth={3}
                     dot={false}
                     name="Close"
+                    isAnimationActive={false}
                   />
                 </>
               )}
