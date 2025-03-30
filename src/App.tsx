@@ -50,7 +50,7 @@ import { CandleStick, TimeInterval } from './types/CandleStick';
 import { styled } from '@mui/material/styles';
 import { TooltipProps } from 'recharts';
 import { 
-  ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Bar 
+  ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine 
 } from 'recharts';
 import { Logo } from './components/Logo';
 
@@ -58,7 +58,7 @@ const CHART_COLORS = {
   open: '#2196f3',
   high: '#4caf50',
   low: '#f44336',
-  close: '#4caf50', // Changed from #9c27b0 to match priceUp
+  close: '#9c27b0',
   volume: '#ff9800',
   bar: 'rgba(128, 128, 128, 0.2)',
   priceUp: '#4caf50',
@@ -109,7 +109,7 @@ const CandleStickBar = (props: any) => {
 };
 
 type TimeFrame = '15m' | '1h' | '1d' | '1w';
-type ChartMode = 'candles' | 'lines';
+type ChartMode = 'candles' | 'lines' | 'both';
 
 const FINHUB_API_KEY = import.meta.env.VITE_FINHUB_API_KEY;
 
@@ -722,6 +722,14 @@ const AppContent = () => {
                   <LineChartIcon />
                 </ToggleButton>
               </MuiTooltip>
+              <MuiTooltip title="Both">
+                <ToggleButton value="both">
+                  <Box sx={{ display: 'flex', gap: 0 }}>
+                    <CandleChartIcon />
+                    <LineChartIcon />
+                  </Box>
+                </ToggleButton>
+              </MuiTooltip>
             </ToggleButtonGroup>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -773,15 +781,32 @@ const AppContent = () => {
                 interval={timeFrame === '1w' ? 24 : 'preserveStartEnd'}
                 minTickGap={50}
               />
-              <YAxis domain={['auto', 'auto']} />
+              <YAxis 
+                domain={['auto', 'auto']} 
+                orientation="right"
+                tickFormatter={formatPrice}
+              />
               <Tooltip content={<ChartTooltip />} />
-              {chartMode === 'candles' ? (
+              {currentPriceValue && (
+                <ReferenceLine 
+                  y={currentPriceValue}
+                  stroke={isPriceUp(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
+                  strokeDasharray="3 3"
+                  label={{
+                    value: formatPrice(currentPriceValue),
+                    position: 'right',
+                    fill: isPriceUp(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown,
+                  }}
+                />
+              )}
+              {(chartMode === 'candles' || chartMode === 'both') && (
                 <Bar
                   dataKey={d => [d.high, d.low]}
                   shape={<CandleStickBar />}
                   name="Range"
                 />
-              ) : (
+              )}
+              {(chartMode === 'lines' || chartMode === 'both') && (
                 <>
                   <Line
                     type="linear"
