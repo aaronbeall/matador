@@ -59,85 +59,15 @@ import {
 } from 'recharts';
 import { Logo } from './components/Logo';
 import { calculateVWAP, calculateEMA, Indicator } from './utils/indicators';
-
-const CHART_COLORS = {
-  open: '#2196f3',
-  high: '#4caf50',
-  low: '#f44336',
-  close: '#9c27b0',
-  volume: '#ff9800',
-  bar: 'rgba(128, 128, 128, 0.2)',
-  priceUp: '#4caf50',
-  priceDown: '#f44336',
-  vwap: '#ff00ff',
-  ema9: '#ffeb3b',
-  ema21: '#ff9800',
-} as const;
-
-const CandlestickBar = (props: any) => {
-  const { x, y, width, height, payload } = props;
-  
-  const isBullish = payload.close > payload.open;
-  const color = isBullish ? CHART_COLORS.priceUp : CHART_COLORS.priceDown;
-  
-  // Calculate Y coordinates relative to the data range
-  const yScale = height / (props.high - props.low);
-  const yOffset = y + height;
-  
-  const getY = (value: number) => yOffset - (value - props.low) * yScale;
-  
-  // Wick coordinates
-  const wickTop = getY(payload.high);
-  const wickBottom = getY(payload.low);
-  
-  // Body coordinates (use open/close directly)
-  const openY = getY(payload.open);
-  const closeY = getY(payload.close);
-  
-  return (
-    <g>
-      {/* Wick */}
-      <line
-        x1={x + width / 2}
-        y1={wickTop}
-        x2={x + width / 2}
-        y2={wickBottom}
-        stroke={color}
-        strokeWidth={1}
-      />
-      {/* Body */}
-      <rect
-        x={x}
-        y={Math.min(openY, closeY)}
-        width={width}
-        height={Math.max(1, Math.abs(closeY - openY))}
-        fill={color}
-      />
-    </g>
-  );
-};
+import { CandlestickBar } from './components/CandlestickBar';
+import { ChartTooltip } from './components/ChartTooltip';
+import { CHART_COLORS } from './constants/colors';
+import { formatPrice, formatVolume, formatDelta, formatPercent } from './utils/formatters';
 
 type TimeFrame = '15m' | '1h' | '1d' | '1w';
 type ChartMode = 'candles' | 'lines' | 'both';
 
 const FINHUB_API_KEY = import.meta.env.VITE_FINHUB_API_KEY;
-
-const formatVolume = (volume: number) => {
-  if (volume >= 1000) {
-    return `${(volume / 1000).toFixed(1)}K`;
-  }
-  return volume.toLocaleString();
-};
-
-const formatPrice = (price: number) => 
-  `${price < 0 ? '-' : ''}$${Math.abs(price).toFixed(2)}`;
-
-const formatPercent = (num: number) => `${num.toFixed(2)}%`;
-
-const formatDelta = <T extends (n: number) => string>(
-  value: number,
-  formatter: T
-) => `${value >= 0 ? '+' : ''}${formatter(value)}`;
 
 const getTimeFrameMs = (timeFrame: TimeFrame) => 
   timeFrame === '15m' ? 15 * 60 * 1000 :
@@ -160,47 +90,6 @@ const calculateChanges = (candles: Candlestick[], timeFrame: TimeFrame) => {
   const percent = (delta / first.open) * 100;
   
   return { delta, percent };
-};
-
-const ChartTooltip = ({ active, payload, label }: TooltipProps<number, string>) => {
-  const { isDarkMode } = useTheme();
-  if (!active || !payload?.[0]?.payload) return null;
-  
-  const candle = payload[0].payload as Candlestick;
-  
-  return (
-    <Box
-      sx={{
-        backgroundColor: isDarkMode ? 'rgba(0,0,0,0.9)' : 'rgba(255,255,255,0.9)',
-        border: 1,
-        borderColor: 'divider',
-        borderRadius: 1,
-        p: 1.5,
-        fontSize: '0.75rem',
-        boxShadow: theme => `0 4px 20px ${isDarkMode ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.25)'}`,
-        backdropFilter: 'blur(8px)',
-        transform: 'translateY(-4px)',
-        transition: 'all 0.2s ease-out',
-      }}
-    >
-      <Typography variant="caption" display="block" color="text.secondary">
-        {new Date(label).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-      </Typography>
-      <Box sx={{ 
-        display: 'grid', 
-        gridTemplateColumns: 'auto auto',
-        gap: 0.5,
-        mt: 0.5,
-        color: 'text.primary',
-      }}>
-        <span style={{ color: CHART_COLORS.open }}>O:</span><span>{formatPrice(candle.open)}</span>
-        <span style={{ color: CHART_COLORS.high }}>H:</span><span>{formatPrice(candle.high)}</span>
-        <span style={{ color: CHART_COLORS.low }}>L:</span><span>{formatPrice(candle.low)}</span>
-        <span style={{ color: CHART_COLORS.close }}>C:</span><span>{formatPrice(candle.close)}</span>
-        <span style={{ color: CHART_COLORS.volume }}>V:</span><span>{formatVolume(candle.volume)}</span>
-      </Box>
-    </Box>
-  );
 };
 
 const indicatorCalculators: Record<Indicator, (candles: Candlestick[]) => number[]> = {
