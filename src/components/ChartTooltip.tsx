@@ -6,13 +6,14 @@ import { formatPrice, formatVolume } from '../utils/formatters';
 import { Candlestick } from '../types/Candlestick';
 import { Indicator } from '../utils/indicators';
 import React from 'react';
+import { INDICATOR_DEFS } from '../constants/indicators';
 
 export const ChartTooltip = ({ active, payload, label }: TooltipProps<number, string>) => {
   const { isDarkMode } = useTheme();
   if (!active || !payload?.[0]?.payload) return null;
   
   const candle = payload[0].payload as Candlestick;
-  const indicators = ['vwap', 'ema9', 'ema21'].filter(
+  const indicators = Object.keys(INDICATOR_DEFS).filter(
     (indicator): indicator is Indicator => indicator in candle
   );
 
@@ -64,7 +65,7 @@ export const ChartTooltip = ({ active, payload, label }: TooltipProps<number, st
             {indicators.map((indicator) => (
               <React.Fragment key={indicator}>
                 <span style={{ color: CHART_COLORS[indicator] }}>
-                  {indicator.toUpperCase()}:
+                  {INDICATOR_DEFS[indicator].name}:
                 </span>
                 <span>{formatPrice(candle[indicator] ?? 0)}</span>
               </React.Fragment>

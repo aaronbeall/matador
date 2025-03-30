@@ -63,6 +63,7 @@ import { CandlestickBar } from './components/CandlestickBar';
 import { ChartTooltip } from './components/ChartTooltip';
 import { CHART_COLORS } from './constants/colors';
 import { formatPrice, formatVolume, formatDelta, formatPercent } from './utils/formatters';
+import { INDICATOR_DEFS } from './constants/indicators';
 
 type TimeFrame = '15m' | '1h' | '1d' | '1w';
 type ChartMode = 'candles' | 'lines' | 'both';
@@ -720,32 +721,37 @@ const AppContent = () => {
             open={Boolean(menuAnchor)}
             onClose={() => setMenuAnchor(null)}
           >
-            {(['vwap', 'ema9', 'ema21', 'sma20', 'sma50', 'sma200'] as const).map(indicator => (
-              <MenuItem key={indicator}>
-                <FormControlLabel
-                  control={
-                    <Checkbox 
-                      checked={indicators.includes(indicator)}
-                      onChange={() => handleIndicatorChange(indicator)}
-                    />
-                  }
-                  label={
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Box
-                        sx={{
-                          width: 12,
-                          height: 12,
-                          borderRadius: '50%',
-                          bgcolor: CHART_COLORS[indicator],
-                        }}
+            {Object.values(INDICATOR_DEFS).map(indicator => (
+              <MuiTooltip
+                key={indicator.id}
+                title={indicator.description}
+                placement="right"
+                arrow
+              >
+                <MenuItem>
+                  <FormControlLabel
+                    control={
+                      <Checkbox 
+                        checked={indicators.includes(indicator.id)}
+                        onChange={() => handleIndicatorChange(indicator.id)}
                       />
-                      {indicator === 'vwap' ? 'VWAP' : 
-                        indicator.startsWith('ema') ? `EMA(${indicator.slice(3)})` :
-                        `SMA(${indicator.slice(3)})`}
-                    </Box>
-                  }
-                />
-              </MenuItem>
+                    }
+                    label={
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box
+                          sx={{
+                            width: 12,
+                            height: 12,
+                            borderRadius: '50%',
+                            bgcolor: CHART_COLORS[indicator.id],
+                          }}
+                        />
+                        {indicator.name}
+                      </Box>
+                    }
+                  />
+                </MenuItem>
+              </MuiTooltip>
             ))}
           </Menu>
         </Box>
