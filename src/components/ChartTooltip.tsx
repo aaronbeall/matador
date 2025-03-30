@@ -37,7 +37,7 @@ export const ChartTooltip = ({ active, payload, label }: TooltipProps<number, st
                 <span style={{ color: CHART_COLORS[indicator] }}>
                   {INDICATOR_DEFS[indicator].name}:
                 </span>
-                <span>{formatPrice(candle[indicator] ?? 0)}</span>
+                <span>{INDICATOR_DEFS[indicator].format(candle[indicator] ?? 0)}</span>
               </React.Fragment>
             ))}
           </TooltipGrid>
