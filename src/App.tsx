@@ -956,6 +956,7 @@ const AppContent = () => {
                     dataKey="histogram"
                     shape={<MACDHistogramBar />}
                     name="MACD Histogram"
+                    isAnimationActive={false}
                   />
                   <Line
                     type="monotone"
@@ -963,6 +964,7 @@ const AppContent = () => {
                     stroke={CHART_COLORS.macdLine}
                     name="MACD"
                     dot={false}
+                    isAnimationActive={false}
                   />
                   <Line
                     type="monotone"
@@ -970,6 +972,7 @@ const AppContent = () => {
                     stroke={CHART_COLORS.macdSignal}
                     name="Signal"
                     dot={false}
+                    isAnimationActive={false}
                   />
                 </ComposedChart>
               </ResponsiveContainer>
@@ -1002,6 +1005,7 @@ const AppContent = () => {
                     stroke={CHART_COLORS.rsi}
                     name="RSI"
                     dot={false}
+                    isAnimationActive={false}
                   />
                 </ComposedChart>
               </ResponsiveContainer>
