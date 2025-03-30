@@ -801,7 +801,7 @@ const AppContent = () => {
               )}
               {(chartMode === 'candles' || chartMode === 'both') && (
                 <Bar
-                  dataKey={d => [d.high, d.low]}
+                  dataKey={d => [d.low, d.high]}
                   shape={<CandleStickBar />}
                   name="Range"
                 />
