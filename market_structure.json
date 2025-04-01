@@ -1,0 +1,100 @@
+{
+  "market_structure": {
+    "trend": {
+      "bullish": {
+        "price_action": [
+          "Higher Highs",
+          "Higher Lows"
+        ],
+        "market_structure": [
+          "Trend Confirmation"
+        ],
+        "indicator_signals": [
+          "Price Above SMA50",
+          "Price Above SMA200",
+          "RSI > 50",
+          "MACD Above Signal Line"
+        ]
+      },
+      "bearish": {
+        "price_action": [
+          "Lower Highs",
+          "Lower Lows"
+        ],
+        "market_structure": [
+          "Trend Confirmation"
+        ],
+        "indicator_signals": [
+          "Price Below SMA50",
+          "Price Below SMA200",
+          "RSI < 50",
+          "MACD Below Signal Line"
+        ]
+      }
+    },
+    "range": {
+      "price_action": [
+        "Support",
+        "Resistance"
+      ],
+      "market_structure": [
+        "Range-Bound Market",
+        "Low Volatility",
+        "Price Within Range"
+      ],
+      "indicator_signals": [
+        "RSI Between 30 and 70",
+        "MACD Near Zero"
+      ]
+    },
+    "consolidation": {
+      "price_action": [
+        "Tight Price Range",
+        "Triangle Pattern",
+        "Rectangle Pattern",
+        "Flag Pattern",
+        "Pennant Pattern"
+      ],
+      "market_structure": [
+        "Decreasing Volume",
+        "Price Compression"
+      ],
+      "indicator_signals": [
+        "RSI Between 40 and 60",
+        "MACD Flat or Neutral"
+      ]
+    },
+    "reversal": {
+      "bullish": {
+        "price_action": [
+          "Break Above Resistance",
+          "Higher Highs",
+          "Higher Lows"
+        ],
+        "market_structure": [
+          "Trend Reversal"
+        ],
+        "indicator_signals": [
+          "Volume Surge",
+          "RSI Divergence",
+          "MACD Divergence"
+        ]
+      },
+      "bearish": {
+        "price_action": [
+          "Break Below Support",
+          "Lower Highs",
+          "Lower Lows"
+        ],
+        "market_structure": [
+          "Trend Reversal"
+        ],
+        "indicator_signals": [
+          "Volume Surge",
+          "RSI Divergence",
+          "MACD Divergence"
+        ]
+      }
+    }
+  }
+}
