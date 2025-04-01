@@ -3,120 +3,234 @@
     {
       "name": "Momentum Scalping",
       "summary": "Rides strong price moves in the direction of momentum.",
-      "best_market_conditions": "High volatility, trending markets.",
+      "best_market_conditions": ["High Volatility", "Trending Market"],
+      "how_to": "Identify strong trends using MACD and RSI. Look for a breakout above resistance for longs or below support for shorts. Confirm with volume spikes. Enter immediately after confirmation. Exit when momentum slows or MACD shows divergence.",
       "setup": {
         "indicators": ["MACD", "RSI", "EMA9", "Volume"],
-        "candlestick_patterns": ["Bullish Engulfing", "Bearish Engulfing"],
-        "price_action_signals": ["Breakout", "Trend Continuation"],
-        "volume_signals": ["Spike", "Rising Volume"],
-        "market_structure_signals": ["Higher Highs", "Lower Lows"]
+        "candlestick_patterns": {
+          "long": ["Bullish Engulfing", "Marubozu", "Bullish Hammer"],
+          "short": ["Bearish Engulfing", "Marubozu", "Shooting Star"]
+        },
+        "price_action_signals": {
+          "long": ["Breakout", "Trend Continuation", "Pullback to EMA9"],
+          "short": ["Breakout", "Trend Continuation", "Pullback to EMA9"]
+        },
+        "volume_signals": ["Spike", "Rising Volume", "Volume Divergence"],
+        "market_structure_signals": {
+          "long": ["Higher Highs", "Higher Lows"],
+          "short": ["Lower Lows", "Lower Highs"]
+        }
       },
       "entry": {
-        "condition": "Enter after a breakout candle closes above resistance (buy) or below support (sell).",
-        "confirmation": ["MACD Crossover", "RSI above 50 (longs) or below 50 (shorts)"]
+        "condition": {
+          "long": "Enter after a breakout candle closes above resistance.",
+          "short": "Enter after a breakout candle closes below support."
+        },
+        "confirmation": {
+          "long": ["MACD Crossover", "RSI above 50"],
+          "short": ["MACD Crossover", "RSI below 50"]
+        }
       },
       "exit": {
-        "condition": "Close when momentum slows, RSI overbought/oversold, or MACD divergence.",
+        "condition": {
+          "long": "Close when momentum slows or MACD shows divergence.",
+          "short": "Close when momentum slows or MACD shows divergence."
+        },
         "confirmation": ["Price stalls", "Decreasing volume"]
       }
     },
     {
       "name": "Range Trading Scalping",
       "summary": "Buys at support, sells at resistance within a price range.",
-      "best_market_conditions": "Sideways, choppy markets.",
+      "best_market_conditions": ["Sideways Market", "Low Volatility"],
+      "how_to": "Identify a range with support and resistance using Bollinger Bands and Pivot Points. Buy at support when RSI is oversold and price action confirms a bounce. Sell at resistance when RSI is overbought. Exit at mid-range or opposite boundary.",
       "setup": {
         "indicators": ["Bollinger Bands", "RSI", "Pivot Points"],
-        "candlestick_patterns": ["Bullish Pin Bar", "Bearish Pin Bar"],
-        "price_action_signals": ["Bounce", "Reversal"],
-        "volume_signals": ["Divergence"],
-        "market_structure_signals": ["Double Bottom", "Double Top"]
+        "candlestick_patterns": {
+          "long": ["Bullish Pin Bar", "Doji", "Bullish Engulfing"],
+          "short": ["Bearish Pin Bar", "Doji", "Bearish Engulfing"]
+        },
+        "price_action_signals": {
+          "long": ["Bounce", "Support Rejection"],
+          "short": ["Bounce", "Resistance Rejection"]
+        },
+        "volume_signals": ["Divergence", "Decreasing Volume"],
+        "market_structure_signals": {
+          "long": ["Double Bottom", "Mean Reversion"],
+          "short": ["Double Top", "Mean Reversion"]
+        }
       },
       "entry": {
-        "condition": "Buy near support with bullish confirmation; sell near resistance with bearish confirmation.",
-        "confirmation": ["RSI Divergence", "Bollinger Band touch (outer band rejection)"]
+        "condition": {
+          "long": "Buy near support with bullish confirmation.",
+          "short": "Sell near resistance with bearish confirmation."
+        },
+        "confirmation": {
+          "long": ["RSI Divergence", "Bollinger Band touch"],
+          "short": ["RSI Divergence", "Bollinger Band touch"]
+        }
       },
       "exit": {
-        "condition": "Close at mid-range or opposite range boundary; cut loss if price breaks out.",
-        "confirmation": ["Rejection candle", "Volume decreasing at range edges"]
+        "condition": {
+          "long": "Close at mid-range or opposite range boundary.",
+          "short": "Close at mid-range or opposite range boundary."
+        },
+        "confirmation": ["Rejection candle", "Volume decreasing"]
       }
     },
     {
       "name": "Breakout Scalping",
       "summary": "Trades price breaking out of key levels with force.",
-      "best_market_conditions": "High volatility, strong market movement.",
+      "best_market_conditions": ["High Volatility", "Strong Market Movement"],
+      "how_to": "Identify strong breakouts using ATR, MACD, and volume spikes. Enter when price closes above resistance for longs or below support for shorts, confirmed by 2x average volume. Exit when price struggles to continue or volume fades.",
       "setup": {
         "indicators": ["ATR", "Volume", "MACD", "EMA9"],
-        "candlestick_patterns": ["Marubozu", "Bullish Engulfing", "Bearish Engulfing"],
-        "price_action_signals": ["Breakout", "Retest"],
-        "volume_signals": ["Spike"],
-        "market_structure_signals": ["Higher Highs", "Lower Lows"]
+        "candlestick_patterns": {
+          "long": ["Marubozu", "Bullish Engulfing", "Three White Soldiers"],
+          "short": ["Marubozu", "Bearish Engulfing", "Three Black Crows"]
+        },
+        "price_action_signals": {
+          "long": ["Breakout", "Retest and Go", "Momentum Surge"],
+          "short": ["Breakout", "Retest and Go", "Momentum Surge"]
+        },
+        "volume_signals": ["Spike", "Sustained Volume", "Volume Divergence"],
+        "market_structure_signals": {
+          "long": ["Higher Highs", "Key Level Break"],
+          "short": ["Lower Lows", "Key Level Break"]
+        }
       },
       "entry": {
-        "condition": "Enter when price breaks resistance (buy) or support (sell) with strong volume confirmation.",
-        "confirmation": ["High ATR", "2x Average Volume on breakout candle"]
+        "condition": {
+          "long": "Enter when price breaks resistance with strong volume.",
+          "short": "Enter when price breaks support with strong volume."
+        },
+        "confirmation": {
+          "long": ["High ATR", "2x Average Volume"],
+          "short": ["High ATR", "2x Average Volume"]
+        }
       },
       "exit": {
-        "condition": "Close when price reaches target or retraces back inside the range.",
+        "condition": {
+          "long": "Close when price reaches target or retraces inside range.",
+          "short": "Close when price reaches target or retraces inside range."
+        },
         "confirmation": ["Failed follow-through", "Volume drop"]
       }
     },
     {
       "name": "VWAP Scalping",
       "summary": "Uses VWAP as dynamic support/resistance.",
-      "best_market_conditions": "Trending intraday moves.",
+      "best_market_conditions": ["Trending Market", "Intraday Movements"],
+      "how_to": "Monitor price movements relative to VWAP. Buy when price dips below VWAP and shows reversal signals. Sell when price rises above VWAP and weakens. Use EMA9 as a secondary confirmation. Exit when price returns to VWAP or volume drops.",
       "setup": {
         "indicators": ["VWAP", "Volume", "EMA9"],
-        "candlestick_patterns": ["Bullish Hammer", "Bearish Hammer"],
-        "price_action_signals": ["Bounce", "Trend Continuation"],
-        "volume_signals": ["Reversals"],
-        "market_structure_signals": ["Pullback"]
+        "candlestick_patterns": {
+          "long": ["Bullish Hammer", "Bullish Engulfing", "Piercing Line"],
+          "short": ["Bearish Hammer", "Bearish Engulfing", "Dark Cloud Cover"]
+        },
+        "price_action_signals": {
+          "long": ["Bounce", "Reversal at VWAP", "Pullback"],
+          "short": ["Bounce", "Reversal at VWAP", "Pullback"]
+        },
+        "volume_signals": ["Reversals", "Volume Spike", "Divergence"],
+        "market_structure_signals": {
+          "long": ["Higher Lows", "VWAP Retest"],
+          "short": ["Lower Highs", "VWAP Retest"]
+        }
       },
       "entry": {
-        "condition": "Buy when price dips below VWAP and starts reversing; sell when price rises above VWAP and weakens.",
-        "confirmation": ["VWAP Retest with price rejection", "Rising Volume"]
+        "condition": {
+          "long": "Buy when price dips below VWAP and starts reversing.",
+          "short": "Sell when price rises above VWAP and weakens."
+        },
+        "confirmation": {
+          "long": ["VWAP Retest", "Rising Volume"],
+          "short": ["VWAP Retest", "Rising Volume"]
+        }
       },
       "exit": {
-        "condition": "Close when price returns to VWAP or stalls.",
+        "condition": {
+          "long": "Close when price returns to VWAP or stalls.",
+          "short": "Close when price returns to VWAP or stalls."
+        },
         "confirmation": ["Stalling near VWAP", "Volume drop"]
       }
     },
     {
       "name": "Mean-Reversion Scalping",
-      "summary": "Trades price snapping back to its average.",
-      "best_market_conditions": "Low-volatility, range-bound.",
+      "summary": "Trades price swings back to the mean after deviations.",
+      "best_market_conditions": ["Range-Bound Market", "Low Volatility"],
+      "how_to": "Identify overextended price movements using Bollinger Bands and RSI. Look for price touching extreme levels of Bollinger Bands with divergence in RSI. Enter when a reversal is confirmed. Exit at the moving average or mean reversion point.",
       "setup": {
-        "indicators": ["Bollinger Bands", "VWAP", "RSI"],
-        "candlestick_patterns": ["Doji", "Spinning Top"],
-        "price_action_signals": ["Overextension", "Pullback"],
-        "volume_signals": ["Divergence"],
-        "market_structure_signals": ["Range Bound"]
+        "indicators": ["Bollinger Bands", "RSI", "VWAP"],
+        "candlestick_patterns": {
+          "long": ["Bullish Pin Bar", "Bullish Engulfing", "Piercing Line"],
+          "short": ["Bearish Pin Bar", "Bearish Engulfing", "Dark Cloud Cover"]
+        },
+        "price_action_signals": {
+          "long": ["Bounce from Support", "Reversal at Extreme Bands"],
+          "short": ["Bounce from Resistance", "Reversal at Extreme Bands"]
+        },
+        "volume_signals": ["Divergence", "Volume Drop"],
+        "market_structure_signals": {
+          "long": ["Double Bottom", "Higher Lows"],
+          "short": ["Double Top", "Lower Highs"]
+        }
       },
       "entry": {
-        "condition": "Buy when price is below the lower Bollinger Band or RSI is oversold; sell when price is above the upper Bollinger Band or RSI is overbought.",
-        "confirmation": ["RSI Extreme", "Bollinger Band touch", "Decreasing Volume on last impulse candle"]
+        "condition": {
+          "long": "Buy when price reaches the lower Bollinger Band with RSI oversold and bullish confirmation.",
+          "short": "Sell when price reaches the upper Bollinger Band with RSI overbought and bearish confirmation."
+        },
+        "confirmation": {
+          "long": ["RSI Divergence", "Bullish Candlestick Reversal"],
+          "short": ["RSI Divergence", "Bearish Candlestick Reversal"]
+        }
       },
       "exit": {
-        "condition": "Close when price returns to mean or momentum weakens.",
-        "confirmation": ["Price reaches mean", "Volume slows"]
+        "condition": {
+          "long": "Close when price returns to the mean (VWAP or Bollinger Midline).",
+          "short": "Close when price returns to the mean (VWAP or Bollinger Midline)."
+        },
+        "confirmation": ["Stalling at Mean", "Volume Drop"]
       }
     },
     {
       "name": "Opening Range Breakout (ORB) Scalping",
       "summary": "Trades breakouts from the first minutes of market open.",
-      "best_market_conditions": "High volatility at market open.",
+      "best_market_conditions": ["High Volatility", "Market Open"],
+      "how_to": "Mark the high and low of the opening range. Buy on a breakout above the range or sell below, confirmed by high volume and ATR expansion. Ride the move and exit when price stalls or pulls back significantly.",
       "setup": {
         "indicators": ["Volume", "VWAP", "ATR"],
-        "candlestick_patterns": ["Marubozu"],
-        "price_action_signals": ["Breakout", "Momentum Surge"],
-        "volume_signals": ["Spike"],
-        "market_structure_signals": ["Opening Range Highs/Lows"]
+        "candlestick_patterns": {
+          "long": ["Marubozu", "Bullish Engulfing"],
+          "short": ["Marubozu", "Bearish Engulfing"]
+        },
+        "price_action_signals": {
+          "long": ["Opening Range Breakout", "Momentum Continuation"],
+          "short": ["Opening Range Breakdown", "Momentum Continuation"]
+        },
+        "volume_signals": ["Volume Spike", "Sustained Volume"],
+        "market_structure_signals": {
+          "long": ["Opening Range Highs"],
+          "short": ["Opening Range Lows"]
+        }
       },
       "entry": {
-        "condition": "Buy on a breakout above the range with volume confirmation; sell on a breakdown below.",
-        "confirmation": ["Opening range breakout with above-average volume", "ATR expanding"]
+        "condition": {
+          "long": "Buy on a breakout above the opening range with volume confirmation.",
+          "short": "Sell on a breakout below the opening range with volume confirmation."
+        },
+        "confirmation": {
+          "long": ["Above-average volume", "ATR expanding"],
+          "short": ["Above-average volume", "ATR expanding"]
+        }
       },
       "exit": {
-        "condition": "Close trade when price stalls, pullback occurs, or ATR target is reached.",
+        "condition": {
+          "long": "Close trade when price stalls or pullback occurs.",
+          "short": "Close trade when price stalls or pullback occurs."
+        },
         "confirmation": ["Price struggles at key level", "Declining volume"]
       }
     }
