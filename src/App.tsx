@@ -267,19 +267,54 @@ const AppContent = () => {
     setCandles(candleStore.current.getCandles(timeInterval));
   }, [timeInterval]);
 
+  const fetchHistoricalData = async (symbol: string) => {
+    const now = Date.now();
+    const yesterday = now - (24 * 60 * 60 * 1000);
+    
+    try {
+      const response = await fetch(
+        `https://finnhub.io/api/v1/stock/candle?symbol=${symbol}&resolution=1&from=${Math.floor(yesterday/1000)}&to=${Math.floor(now/1000)}&token=${FINHUB_API_KEY}`
+      );
+      const data = await response.json();
+      
+      if (data.s === 'ok' && data.t) {
+        // Convert Finnhub candles to trades
+        const trades = data.t.map((timestamp: number, i: number) => ({
+          price: data.c[i],
+          volume: data.v[i],
+          timestamp: timestamp * 1000,
+          conditions: ['Historical']
+        }));
+        
+        // Add historical trades to candleStore
+        trades.forEach(trade => candleStore.current.addTrade(trade));
+        setCandles(candleStore.current.getCandles(timeInterval));
+      }
+    } catch (error) {
+      console.error('Error fetching historical data:', error);
+      setSnackbar({
+        open: true,
+        message: 'Error fetching historical data',
+        severity: 'error'
+      });
+    }
+  };
+
   useEffect(() => {
     if (wsEnabled) {
       setConnectionState('connecting');
       wsManager.current = new WebSocketManager(
         import.meta.env.VITE_FINHUB_API_KEY,
         {
-          onConnected: () => {
+          onConnected: async () => {
             setConnectionState('connected');
             setSnackbar({
               open: true,
               message: 'Connected to WebSocket server',
               severity: 'success'
             });
+            // Fetch historical data when connected
+            await fetchHistoricalData(symbol);
           },
           onDisconnected: () => {
             setConnectionState('disconnected');
@@ -314,7 +349,7 @@ const AppContent = () => {
       wsManager.current?.disconnect();
       setConnectionState('disconnected');
     }
-  }, [wsEnabled, symbol]);
+  }, [wsEnabled, symbol, timeInterval]);
 
   useEffect(() => {
     if (!wsEnabled) {
