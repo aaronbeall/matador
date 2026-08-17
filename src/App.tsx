@@ -32,12 +32,11 @@ import {
   FormControlLabel,
   Checkbox,
   Drawer,
-  Tabs,
-  Tab,
+  Badge,
 } from '@mui/material';
-import { 
-  Brightness4, 
-  Brightness7, 
+import {
+  Brightness4,
+  Brightness7,
   SmartToy,
   CheckCircle as CheckIcon,
   Cancel as CancelIcon,
@@ -50,6 +49,12 @@ import {
   ArrowDropDown as ArrowDownIcon,
   Settings as SettingsIcon,
   ListAlt as ListAltIcon,
+  Star as WatchlistIcon,
+  MenuBook as StrategyIcon,
+  Lightbulb as IdeasIcon,
+  Timeline as LevelsIcon,
+  Notifications as AlertsIcon,
+  History as ActivityIcon,
 } from '@mui/icons-material';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { WebSocketManager } from './services/WebSocketManager';
@@ -76,6 +81,8 @@ import { IdeasPanel } from './components/TradeIdeas/IdeasPanel';
 import { LevelsPanel } from './components/Levels/LevelsPanel';
 import { AlertsPanel } from './components/Alerts/AlertsPanel';
 import { ActivityPanel } from './components/Activity/ActivityPanel';
+import { SidebarNav, SidebarNavItem } from './components/Sidebar/SidebarNav';
+import { SkillTip } from './components/Sidebar/SkillTip';
 import { WatchlistEntry } from './types/Watchlist';
 import { TradeIdea } from './types/TradeIdea';
 import { Level as LevelType } from './types/Level';
@@ -97,6 +104,11 @@ import {
 
 type TimeFrame = '15m' | '1h' | '3h' | '6h' | '1d' | '1w';
 type ChartMode = 'candles' | 'lines' | 'both';
+type SidebarTab = 'watchlist' | 'strategy' | 'ideas' | 'levels' | 'alerts' | 'activity';
+// Tabs whose "new since last looked" state is worth tracking — Watchlist
+// and Strategy are directly user/Claude-edited, not "arrived" content.
+const TRACKED_TABS: SidebarTab[] = ['ideas', 'levels', 'activity'];
+const LAST_SEEN_STORAGE_KEY = 'matador-sidebar-last-seen';
 
 const FINHUB_API_KEY = import.meta.env.VITE_FINHUB_API_KEY;
 
@@ -217,9 +229,7 @@ const AppContent = () => {
   // window focus, and a slow poll as a fallback if the SSE connection
   // ever drops. See vite-plugins/localDataApi.ts.
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<
-    'watchlist' | 'strategy' | 'ideas' | 'levels' | 'alerts' | 'activity'
-  >('watchlist');
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('watchlist');
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [strategyText, setStrategyText] = useState<string | null>(null);
   const [strategyLoading, setStrategyLoading] = useState(false);
@@ -229,6 +239,57 @@ const AppContent = () => {
   const [alerts, setAlerts] = useState<AlertType[]>([]);
   const [analysisLog, setAnalysisLog] = useState<AnalysisLogEntry[]>([]);
   const [analysisDataUpdatedAt, setAnalysisDataUpdatedAt] = useState<Date | null>(null);
+
+  // When each tracked tab was last actually looked at (open drawer + that
+  // tab selected) — drives the "new" badges on the sidebar rail.
+  // Persisted so badges survive a page refresh instead of resetting.
+  const [lastSeenAt, setLastSeenAt] = useState<Record<string, string>>(() => {
+    try {
+      const stored = localStorage.getItem(LAST_SEEN_STORAGE_KEY);
+      if (stored) return JSON.parse(stored);
+    } catch {
+      // ignore malformed/unavailable storage
+    }
+    const now = new Date().toISOString();
+    return Object.fromEntries(TRACKED_TABS.map((tab) => [tab, now]));
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAST_SEEN_STORAGE_KEY, JSON.stringify(lastSeenAt));
+    } catch {
+      // ignore unavailable storage (e.g. private browsing)
+    }
+  }, [lastSeenAt]);
+
+  // Mark the currently-open tracked tab as seen whenever its data updates
+  // — covers both "just switched to this tab" and "already on this tab
+  // when new data streamed in via SSE."
+  useEffect(() => {
+    if (sidebarOpen && TRACKED_TABS.includes(sidebarTab)) {
+      setLastSeenAt((prev) => ({ ...prev, [sidebarTab]: new Date().toISOString() }));
+    }
+  }, [sidebarOpen, sidebarTab, tradeIdeas, levels, analysisLog]);
+
+  const ideasNewCount = tradeIdeas.filter(
+    (i) => i.status === 'proposed' && i.createdAt > (lastSeenAt.ideas ?? '')
+  ).length;
+  const levelsNewCount = levels.filter(
+    (l) => l.active && l.createdAt > (lastSeenAt.levels ?? '')
+  ).length;
+  const alertsUnacknowledgedCount = alerts.filter((a) => !a.acknowledged).length;
+  const activityNewCount = analysisLog.filter((e) => e.timestamp > (lastSeenAt.activity ?? '')).length;
+  const hasAnyNewAnalysisData =
+    ideasNewCount > 0 || levelsNewCount > 0 || alertsUnacknowledgedCount > 0 || activityNewCount > 0;
+
+  const sidebarNavItems: SidebarNavItem[] = [
+    { value: 'watchlist', label: 'Watchlist', icon: <WatchlistIcon /> },
+    { value: 'strategy', label: 'Strategy', icon: <StrategyIcon /> },
+    { value: 'ideas', label: 'Ideas', icon: <IdeasIcon />, badgeCount: ideasNewCount },
+    { value: 'levels', label: 'Levels', icon: <LevelsIcon />, badgeCount: levelsNewCount },
+    { value: 'alerts', label: 'Alerts', icon: <AlertsIcon />, badgeCount: alertsUnacknowledgedCount },
+    { value: 'activity', label: 'Activity', icon: <ActivityIcon />, badgeCount: activityNewCount },
+  ];
 
   const fetchCurrentPrice = useCallback(async () => {
     setIsLoading(true);
@@ -700,7 +761,9 @@ const AppContent = () => {
           <Box sx={{ flexGrow: 1 }} />
           <MuiTooltip title="Watchlist / Strategy / Ideas">
             <IconButton onClick={() => setSidebarOpen(true)} color="inherit" sx={{ mr: 1 }}>
-              <ListAltIcon />
+              <Badge variant="dot" color="error" overlap="circular" invisible={!hasAnyNewAnalysisData}>
+                <ListAltIcon />
+              </Badge>
             </IconButton>
           </MuiTooltip>
           <IconButton onClick={toggleTheme} color="inherit" sx={{ mr: 2 }}>
@@ -709,37 +772,68 @@ const AppContent = () => {
         </Toolbar>
       </AppBar>
       <Drawer anchor="right" open={sidebarOpen} onClose={() => setSidebarOpen(false)}>
-        <Box sx={{ width: 420, height: '100%', display: 'flex', flexDirection: 'column' }}>
-          <Tabs
-            value={sidebarTab}
-            onChange={(_, newTab) => setSidebarTab(newTab)}
-            variant="scrollable"
-            scrollButtons="auto"
-          >
-            <Tab label="Watchlist" value="watchlist" />
-            <Tab label="Strategy" value="strategy" />
-            <Tab label="Ideas" value="ideas" />
-            <Tab label="Levels" value="levels" />
-            <Tab label="Alerts" value="alerts" />
-            <Tab label="Activity" value="activity" />
-          </Tabs>
-          <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
+        <Box sx={{ width: 500, height: '100%', display: 'flex' }}>
+          <SidebarNav items={sidebarNavItems} value={sidebarTab} onChange={(v) => setSidebarTab(v as SidebarTab)} />
+          <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2, width: 412 }}>
             {sidebarTab === 'watchlist' && (
-              <WatchlistPanel
-                watchlist={watchlist}
-                activeSymbol={symbol}
-                onSelectSymbol={handleSelectWatchlistSymbol}
-                onAdd={handleAddWatchlistSymbol}
-                onRemove={handleRemoveWatchlistSymbol}
-              />
+              <>
+                <SkillTip>
+                  Add/remove symbols here directly, or just ask Claude to add one to the watchlist.
+                </SkillTip>
+                <WatchlistPanel
+                  watchlist={watchlist}
+                  activeSymbol={symbol}
+                  onSelectSymbol={handleSelectWatchlistSymbol}
+                  onAdd={handleAddWatchlistSymbol}
+                  onRemove={handleRemoveWatchlistSymbol}
+                />
+              </>
             )}
             {sidebarTab === 'strategy' && (
-              <StrategyPanel strategyText={strategyText} loading={strategyLoading} error={strategyError} />
+              <>
+                <SkillTip>
+                  Edited by Claude directly when you discuss strategy changes in chat — no skill needed, just talk
+                  through the change.
+                </SkillTip>
+                <StrategyPanel strategyText={strategyText} loading={strategyLoading} error={strategyError} />
+              </>
             )}
-            {sidebarTab === 'ideas' && <IdeasPanel ideas={tradeIdeas} lastUpdated={analysisDataUpdatedAt} />}
-            {sidebarTab === 'levels' && <LevelsPanel levels={levels} />}
-            {sidebarTab === 'alerts' && <AlertsPanel alerts={alerts} onAcknowledge={handleAcknowledgeAlert} />}
-            {sidebarTab === 'activity' && <ActivityPanel entries={analysisLog} />}
+            {sidebarTab === 'ideas' && (
+              <>
+                <SkillTip>
+                  Populated by the <code>find-trades</code> skill — ask Claude to "scan for trades" or run{' '}
+                  <code>/find-trades</code>.
+                </SkillTip>
+                <IdeasPanel ideas={tradeIdeas} lastUpdated={analysisDataUpdatedAt} />
+              </>
+            )}
+            {sidebarTab === 'levels' && (
+              <>
+                <SkillTip>
+                  Also written by <code>find-trades</code> — support/resistance levels get flagged even when no
+                  trade idea qualifies.
+                </SkillTip>
+                <LevelsPanel levels={levels} />
+              </>
+            )}
+            {sidebarTab === 'alerts' && (
+              <>
+                <SkillTip>
+                  Also written by <code>find-trades</code> — notable events like a new idea or price nearing a
+                  level. Acknowledging one here doesn't need a skill.
+                </SkillTip>
+                <AlertsPanel alerts={alerts} onAcknowledge={handleAcknowledgeAlert} />
+              </>
+            )}
+            {sidebarTab === 'activity' && (
+              <>
+                <SkillTip>
+                  The run history of <code>find-trades</code> (and any future analysis skills) — including "no
+                  setup found" results, so you can see what actually ran.
+                </SkillTip>
+                <ActivityPanel entries={analysisLog} />
+              </>
+            )}
           </Box>
         </Box>
       </Drawer>
