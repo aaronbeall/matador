@@ -22,11 +22,14 @@
 - [ ] Chart indicators (EMA, VWAP, MACD, RSI)
 - [ ] Chart drawings (levels, trendlines, etc)
 - [ ] Signal detection and alerts (bullish/bearish candle patterns, crossovers, price action, crossovers, etc)
-- [ ] AI powered suggestions (levels, setups, entries, exits, etc) — see [docs/trade-analysis-plan.md](docs/trade-analysis-plan.md) (plan agreed, not yet built)
-  - [ ] State layer: gitignored `data/` dir (`watchlist.json`, `strategy.md`, `trade-ideas.json`)
-  - [ ] Bridge: Vite dev-server plugin adding local API routes to read/write `data/*.json`
-  - [ ] `find-trades` Claude skill: on-demand scan of watchlist against `strategy.md`, merges qualifying setups into `trade-ideas.json`
-  - [ ] Frontend: Watchlist panel, Ideas panel, Strategy panel (renders `strategy.md`), chart annotations (entry/stop/target lines, R:R zone, trigger marker), light polling (~30-60s) with last-scanned timestamp
+- [x] AI powered suggestions (levels, setups, entries, exits, etc) — core loop built, see [docs/trade-analysis-plan.md](docs/trade-analysis-plan.md)
+  - [x] State layer: gitignored `data/` dir (`watchlist.json`, `strategy.md`, `trade-ideas.json`, `levels.json`, `alerts.json`, `analysis-log.json`, `candles/<symbol>.json`)
+  - [x] Bridge: Vite dev-server plugin with local API routes + SSE push (`/api/events`) so the UI updates the moment a file changes
+  - [x] `find-trades` Claude skill: on-demand scan of watchlist against `strategy.md`; writes trade ideas, levels, alerts, and a run log — live-validated against real market data
+  - [x] Frontend: Watchlist, Strategy, Ideas, Levels, Alerts, Activity panels; active levels render as reference lines on the chart; kept fresh via SSE push + refetch-on-focus + 60s poll fallback
+  - [ ] Multi-symbol simultaneous streaming — only the on-screen chart symbol accumulates live history today; the rest of the watchlist doesn't, until this is fixed
+  - [ ] Per-idea chart overlay: entry/stop/target reference lines + trigger marker for a *specific* trade idea (levels already render; this is the idea-specific layer on top)
+  - [ ] Ideas panel write-back: click to mark taken/skipped/stopped-out/target-hit (Alerts panel already supports acknowledge; Ideas doesn't yet)
 - [ ] Configuration and local storage of user settings
 
 ## Autonomous Trading (Phase 2 — after the manual system above is built)

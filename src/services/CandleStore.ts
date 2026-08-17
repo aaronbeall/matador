@@ -1,8 +1,17 @@
 import { Candlestick, TimeInterval } from '../types/Candlestick';
 import { Trade } from '../types/Trade';
 
+const BASE_INTERVAL_MS = 60000; // 1m — the finest granularity we track
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
 export class CandleStore {
-  private trades: Trade[] = [];
+  // Base candles at 1m resolution, keyed by bucket timestamp. Coarser
+  // intervals (5m/15m/1h) are derived from these by aggregation, so a
+  // candle's real open/high/low/close is only ever computed once, from
+  // either live trades or seeded real data — never collapsed to a
+  // single price point. See seedCandles() below.
+  private baseCandles: Map<number, Candlestick> = new Map();
+
   private timeIntervalMs: Record<TimeInterval, number> = {
     '1m': 60000,
     '5m': 300000,
@@ -11,37 +20,74 @@ export class CandleStore {
   };
 
   addTrade(trade: Trade) {
-    this.trades.push(trade);
-    // Keep only last 24 hours of trades
-    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-    this.trades = this.trades.filter(t => t.timestamp >= oneDayAgo);
+    const bucketTimestamp = Math.floor(trade.timestamp / BASE_INTERVAL_MS) * BASE_INTERVAL_MS;
+    const existing = this.baseCandles.get(bucketTimestamp);
+
+    if (existing) {
+      existing.high = Math.max(existing.high, trade.price);
+      existing.low = Math.min(existing.low, trade.price);
+      existing.close = trade.price;
+      existing.volume += trade.volume;
+    } else {
+      this.baseCandles.set(bucketTimestamp, {
+        timestamp: bucketTimestamp,
+        open: trade.price,
+        high: trade.price,
+        low: trade.price,
+        close: trade.price,
+        volume: trade.volume,
+      });
+    }
+    this.pruneOld();
+  }
+
+  // Seed with real, already-aggregated 1m candles — e.g. rehydrated from
+  // data/candles/<symbol>.json (persisted from a prior live session) or
+  // converted from a REST candle response. Preserves the real open/high/
+  // low/close instead of reconstructing them from a single synthetic
+  // trade, which is what was collapsing precision before.
+  //
+  // Only fills buckets we don't already have live data for — seeding
+  // happens once at connect time, so this never needs to merge/overwrite
+  // live trades that arrived first.
+  seedCandles(candles: Candlestick[]) {
+    for (const candle of candles) {
+      const bucketTimestamp = Math.floor(candle.timestamp / BASE_INTERVAL_MS) * BASE_INTERVAL_MS;
+      if (!this.baseCandles.has(bucketTimestamp)) {
+        this.baseCandles.set(bucketTimestamp, { ...candle, timestamp: bucketTimestamp });
+      }
+    }
+    this.pruneOld();
   }
 
   getCandles(timeInterval: TimeInterval): Candlestick[] {
-    const interval = this.timeIntervalMs[timeInterval];
-    const candles: Map<number, Candlestick> = new Map();
+    const sorted = Array.from(this.baseCandles.values()).sort((a, b) => a.timestamp - b.timestamp);
+    const intervalMs = this.timeIntervalMs[timeInterval];
 
-    this.trades.forEach(trade => {
-      const candleTimestamp = Math.floor(trade.timestamp / interval) * interval;
-      const existingCandle = candles.get(candleTimestamp);
+    if (intervalMs === BASE_INTERVAL_MS) return sorted;
 
-      if (existingCandle) {
-        existingCandle.high = Math.max(existingCandle.high, trade.price);
-        existingCandle.low = Math.min(existingCandle.low, trade.price);
-        existingCandle.close = trade.price;
-        existingCandle.volume += trade.volume;
+    const grouped: Map<number, Candlestick> = new Map();
+    for (const candle of sorted) {
+      const bucketTimestamp = Math.floor(candle.timestamp / intervalMs) * intervalMs;
+      const existing = grouped.get(bucketTimestamp);
+
+      if (existing) {
+        existing.high = Math.max(existing.high, candle.high);
+        existing.low = Math.min(existing.low, candle.low);
+        existing.close = candle.close; // sorted ascending — last write is the latest close
+        existing.volume += candle.volume;
       } else {
-        candles.set(candleTimestamp, {
-          timestamp: candleTimestamp,
-          open: trade.price,
-          high: trade.price,
-          low: trade.price,
-          close: trade.price,
-          volume: trade.volume
-        });
+        grouped.set(bucketTimestamp, { ...candle, timestamp: bucketTimestamp });
       }
-    });
+    }
 
-    return Array.from(candles.values()).sort((a, b) => a.timestamp - b.timestamp);
+    return Array.from(grouped.values()).sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  private pruneOld() {
+    const cutoff = Date.now() - ONE_DAY_MS;
+    for (const timestamp of this.baseCandles.keys()) {
+      if (timestamp < cutoff) this.baseCandles.delete(timestamp);
+    }
   }
 }

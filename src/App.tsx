@@ -31,6 +31,9 @@ import {
   MenuItem,
   FormControlLabel,
   Checkbox,
+  Drawer,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import { 
   Brightness4, 
@@ -46,6 +49,7 @@ import {
   ArrowDropUp as ArrowUpIcon,
   ArrowDropDown as ArrowDownIcon,
   Settings as SettingsIcon,
+  ListAlt as ListAltIcon,
 } from '@mui/icons-material';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { WebSocketManager } from './services/WebSocketManager';
@@ -66,6 +70,30 @@ import { formatPrice, formatVolume, formatDelta, formatPercent } from './utils/f
 import { INDICATOR_DEFS } from './constants/indicators';
 import { MACDHistogramBar } from './components/MACDHistogramBar';
 import { MACDTooltip } from './components/MACDTooltip';
+import { WatchlistPanel } from './components/Watchlist/WatchlistPanel';
+import { StrategyPanel } from './components/Strategy/StrategyPanel';
+import { IdeasPanel } from './components/TradeIdeas/IdeasPanel';
+import { LevelsPanel } from './components/Levels/LevelsPanel';
+import { AlertsPanel } from './components/Alerts/AlertsPanel';
+import { ActivityPanel } from './components/Activity/ActivityPanel';
+import { WatchlistEntry } from './types/Watchlist';
+import { TradeIdea } from './types/TradeIdea';
+import { Level as LevelType } from './types/Level';
+import { Alert as AlertType } from './types/Alert';
+import { AnalysisLogEntry } from './types/AnalysisLog';
+import {
+  getWatchlist,
+  saveWatchlist,
+  getStrategy,
+  persistCandles,
+  getPersistedCandles,
+  getTradeIdeas,
+  getLevels,
+  getAlerts,
+  saveAlerts,
+  getAnalysisLog,
+  subscribeToDataEvents,
+} from './services/dataApi';
 
 type TimeFrame = '15m' | '1h' | '3h' | '6h' | '1d' | '1w';
 type ChartMode = 'candles' | 'lines' | 'both';
@@ -154,13 +182,22 @@ const AppContent = () => {
   const [timeInterval, setTimeInterval] = useState<TimeInterval>('1m');
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('1h');
   const [chartMode, setChartMode] = useState<ChartMode>('candles');
-  const candleStore = useRef(new CandleStore());
+  // One CandleStore per symbol, so switching symbols (e.g. from the
+  // Watchlist panel) while Live never mixes trades from different
+  // tickers into the same bucket.
+  const candleStores = useRef(new Map<string, CandleStore>());
+  const getCandleStore = useCallback((forSymbol: string) => {
+    if (!candleStores.current.has(forSymbol)) {
+      candleStores.current.set(forSymbol, new CandleStore());
+    }
+    return candleStores.current.get(forSymbol)!;
+  }, []);
   const [candles, setCandles] = useState<Candlestick[]>([]);
   const [indicators, setIndicators] = useState<Indicator[]>([]);
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
 
   const wsManager = useRef<WebSocketManager | null>(null);
-  const [wsEnabled, setWsEnabled] = useState(false);
+  const [wsEnabled, setWsEnabled] = useState(true);
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
   const currentPriceRef = useRef<number | null>(null);
 
@@ -171,22 +208,27 @@ const AppContent = () => {
 
   const [isLoading, setIsLoading] = useState(false);
   const refreshInterval = useRef<number>(0);
-  const [isPriceHovered, setIsPriceHovered] = useState(false);
-  const [dummyEnabled, setDummyEnabled] = useState(false);
-  const dummyInterval = useRef<number>(0);
 
-  const PriceContainer = styled(Box)(({ theme }) => ({
-    position: 'relative',
-    '& .refresh-button': {
-      position: 'absolute',
-      right: -40,
-      opacity: 0,
-      transition: theme.transitions.create(['opacity']),
-    },
-    '&:hover .refresh-button': {
-      opacity: 1,
-    }
-  }));
+  // Trade analysis sidebar state (Watchlist / Strategy / Ideas / Levels /
+  // Alerts / Activity) — see docs/trade-analysis-plan.md and
+  // data/strategy.md. All of this is a single source of truth loaded from
+  // the data/ bridge and kept fresh three ways: an SSE push whenever the
+  // find-trades skill (or anything else) writes a file, a refetch on
+  // window focus, and a slow poll as a fallback if the SSE connection
+  // ever drops. See vite-plugins/localDataApi.ts.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<
+    'watchlist' | 'strategy' | 'ideas' | 'levels' | 'alerts' | 'activity'
+  >('watchlist');
+  const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
+  const [strategyText, setStrategyText] = useState<string | null>(null);
+  const [strategyLoading, setStrategyLoading] = useState(false);
+  const [strategyError, setStrategyError] = useState<string | null>(null);
+  const [tradeIdeas, setTradeIdeas] = useState<TradeIdea[]>([]);
+  const [levels, setLevels] = useState<LevelType[]>([]);
+  const [alerts, setAlerts] = useState<AlertType[]>([]);
+  const [analysisLog, setAnalysisLog] = useState<AnalysisLogEntry[]>([]);
+  const [analysisDataUpdatedAt, setAnalysisDataUpdatedAt] = useState<Date | null>(null);
 
   const fetchCurrentPrice = useCallback(async () => {
     setIsLoading(true);
@@ -207,65 +249,21 @@ const AppContent = () => {
     setIsLoading(false);
   }, [symbol]);
 
-  const generateHistoricalCandles = useCallback((basePrice: number, hours: number = 3) => {
-    const now = Date.now();
-    const data: Trade[] = [];
-    let currentPrice = basePrice;
-    
-    // Start from the beginning of the current minute
-    const currentMinute = Math.floor(now / 60000) * 60000;
-    
-    // Generate historical minute data, starting from current minute and going backwards
-    for (let i = 1; i <= hours * 60; i++) {
-      const minuteTimestamp = currentMinute - (i * 60 * 1000);
-      const volatility = currentPrice * 0.0002;
-      
-      // Generate 50-150 trades for this minute
-      const tradesCount = 50 + Math.floor(Math.random() * 100);
-      for (let j = 0; j < tradesCount; j++) {
-        const change = (Math.random() - 0.5) * volatility;
-        currentPrice += change;
-        
-        // Spread trades across the minute
-        const tradeTimestamp = minuteTimestamp + Math.floor(Math.random() * 60000);
-        
-        data.push({
-          price: currentPrice,
-          volume: 100 + Math.floor(Math.random() * 900),
-          timestamp: tradeTimestamp,
-          conditions: ['Historical']
-        });
+  // Reload our own previously-persisted candles (data/candles/<symbol>.json,
+  // written by the persistence effect below) — this is what actually
+  // survives a refresh, since Finnhub's free-tier REST candle endpoint
+  // does not reliably serve history (see fetchHistoricalData below).
+  const loadPersistedCandles = async (symbol: string) => {
+    try {
+      const persisted = await getPersistedCandles(symbol);
+      if (persisted.length > 0) {
+        getCandleStore(symbol).seedCandles(persisted);
+        setCandles(getCandleStore(symbol).getCandles(timeInterval));
       }
+    } catch (error) {
+      console.error('Error loading persisted candles:', error);
     }
-    
-    return data;
-  }, []);
-
-  const generateDummyPrice = useCallback(() => {
-    const basePrice = currentPriceRef.current;
-    if (!basePrice) return;
-    
-    const volatility = basePrice * 0.0002; // 0.02% volatility
-    const now = Date.now();
-    
-    // Generate 3-5 trades per second (roughly 50-150 per minute)
-    const tradesCount = 3 + Math.floor(Math.random() * 3);
-    
-    for (let i = 0; i < tradesCount; i++) {
-      const change = (Math.random() - 0.5) * volatility;
-      const newPrice = basePrice + change;
-      setCurrentPrice(newPrice);
-      
-      candleStore.current.addTrade({
-        price: newPrice,
-        volume: 100 + Math.floor(Math.random() * 900),
-        timestamp: now + (i * 10), // Spread trades slightly within the second
-        conditions: ['Simulated']
-      });
-    }
-    
-    setCandles(candleStore.current.getCandles(timeInterval));
-  }, [timeInterval]);
+  };
 
   const fetchHistoricalData = async (symbol: string) => {
     const now = Date.now();
@@ -278,17 +276,19 @@ const AppContent = () => {
       const data = await response.json();
       
       if (data.s === 'ok' && data.t) {
-        // Convert Finnhub candles to trades
-        const trades = data.t.map((timestamp: number, i: number) => ({
-          price: data.c[i],
-          volume: data.v[i],
+        // Convert Finnhub's OHLCV arrays directly to candles — preserves
+        // the real open/high/low instead of collapsing to a single price.
+        const historicalCandles: Candlestick[] = data.t.map((timestamp: number, i: number) => ({
           timestamp: timestamp * 1000,
-          conditions: ['Historical']
+          open: data.o[i],
+          high: data.h[i],
+          low: data.l[i],
+          close: data.c[i],
+          volume: data.v[i],
         }));
-        
-        // Add historical trades to candleStore
-        trades.forEach(trade => candleStore.current.addTrade(trade));
-        setCandles(candleStore.current.getCandles(timeInterval));
+
+        getCandleStore(symbol).seedCandles(historicalCandles);
+        setCandles(getCandleStore(symbol).getCandles(timeInterval));
       }
     } catch (error) {
       console.error('Error fetching historical data:', error);
@@ -313,7 +313,10 @@ const AppContent = () => {
               message: 'Connected to WebSocket server',
               severity: 'success'
             });
-            // Fetch historical data when connected
+            // Rehydrate from our own persisted history first (reliable,
+            // survives refresh), then try Finnhub's REST candles as a
+            // bonus (often unavailable on the free tier).
+            await loadPersistedCandles(symbol);
             await fetchHistoricalData(symbol);
           },
           onDisconnected: () => {
@@ -334,8 +337,8 @@ const AppContent = () => {
           },
           onTrade: (newTrade) => {
             setTrade(newTrade);
-            candleStore.current.addTrade(newTrade);
-            setCandles(candleStore.current.getCandles(timeInterval));
+            getCandleStore(symbol).addTrade(newTrade);
+            setCandles(getCandleStore(symbol).getCandles(timeInterval));
           }
         }
       );
@@ -368,17 +371,120 @@ const AppContent = () => {
     }
   }, [wsEnabled, timeInterval, fetchCurrentPrice]);
 
-  useEffect(() => {
-    if (!wsEnabled && dummyEnabled) {
-      const interval = window.setInterval(generateDummyPrice, 1000);
-      dummyInterval.current = interval;
-      return () => {
-        if (dummyInterval.current) {
-          clearInterval(dummyInterval.current);
-        }
-      };
+  // Reload the shared data/ state from the local bridge. `only` scopes it
+  // to a single route (used by the SSE handler below); omitted, it
+  // refreshes everything (used on mount, window focus, and poll fallback).
+  const refreshAnalysisData = useCallback(async (only?: string) => {
+    const tasks: Promise<unknown>[] = [];
+    if (!only || only === 'watchlist') {
+      tasks.push(getWatchlist().then(setWatchlist).catch(() => {}));
     }
-  }, [dummyEnabled, wsEnabled, generateDummyPrice]);
+    if (!only || only === 'strategy') {
+      setStrategyLoading((prev) => (only ? prev : true));
+      tasks.push(
+        getStrategy()
+          .then((text) => {
+            setStrategyText(text);
+            setStrategyError(null);
+          })
+          .catch(() => setStrategyError('Failed to load data/strategy.md'))
+          .finally(() => setStrategyLoading(false))
+      );
+    }
+    if (!only || only === 'trade-ideas') {
+      tasks.push(getTradeIdeas().then(setTradeIdeas).catch(() => {}));
+    }
+    if (!only || only === 'levels') {
+      tasks.push(getLevels().then(setLevels).catch(() => {}));
+    }
+    if (!only || only === 'alerts') {
+      tasks.push(getAlerts().then(setAlerts).catch(() => {}));
+    }
+    if (!only || only === 'analysis-log') {
+      tasks.push(getAnalysisLog().then(setAnalysisLog).catch(() => {}));
+    }
+    await Promise.all(tasks);
+    setAnalysisDataUpdatedAt(new Date());
+  }, []);
+
+  // Load once on mount.
+  useEffect(() => {
+    refreshAnalysisData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Push: refetch just the file that changed, as soon as the bridge's SSE
+  // stream reports it (e.g. the find-trades skill just wrote levels.json).
+  useEffect(() => {
+    return subscribeToDataEvents((route) => {
+      if (route.startsWith('candles/')) return; // chart data has its own path
+      refreshAnalysisData(route);
+    });
+  }, [refreshAnalysisData]);
+
+  // Refresh-on-focus: catches anything missed while the tab was in the
+  // background (e.g. SSE briefly dropped).
+  useEffect(() => {
+    const handleFocus = () => refreshAnalysisData();
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [refreshAnalysisData]);
+
+  // Slow poll fallback, independent of push/focus, in case both miss a change.
+  useEffect(() => {
+    const interval = window.setInterval(() => refreshAnalysisData(), 60000);
+    return () => clearInterval(interval);
+  }, [refreshAnalysisData]);
+
+  const handleAcknowledgeAlert = useCallback((id: string) => {
+    setAlerts((prev) => {
+      const next = prev.map((a) => (a.id === id ? { ...a, acknowledged: true } : a));
+      saveAlerts(next).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  // Switching symbols (e.g. clicking a different one in the Watchlist
+  // panel) should immediately reflect that symbol's own data instead of
+  // leaving the previous symbol's candles — or last trade price — on
+  // screen until a new trade happens to arrive.
+  useEffect(() => {
+    setCandles(getCandleStore(symbol).getCandles(timeInterval));
+    setTrade(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
+
+  const handleAddWatchlistSymbol = useCallback((newSymbol: string) => {
+    setWatchlist((prev) => {
+      if (prev.some((e) => e.symbol === newSymbol)) return prev;
+      const next = [...prev, { symbol: newSymbol, addedAt: new Date().toISOString(), active: true }];
+      saveWatchlist(next).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const handleRemoveWatchlistSymbol = useCallback((removedSymbol: string) => {
+    setWatchlist((prev) => {
+      const next = prev.filter((e) => e.symbol !== removedSymbol);
+      saveWatchlist(next).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  // Persist real streamed candles to disk periodically while live, so the
+  // find-trades skill has genuine historical data to work from instead of
+  // relying on the (often premium-gated) REST candle endpoint.
+  useEffect(() => {
+    if (!wsEnabled) return;
+    const persist = () => {
+      const oneMinCandles = getCandleStore(symbol).getCandles('1m');
+      if (oneMinCandles.length > 0) {
+        persistCandles(symbol, oneMinCandles).catch(() => {});
+      }
+    };
+    const interval = window.setInterval(persist, 10000);
+    return () => clearInterval(interval);
+  }, [wsEnabled, symbol]);
 
   const handleConfirm = useCallback(() => {
     const newSymbol = symbolInput.toUpperCase();
@@ -395,6 +501,12 @@ const AppContent = () => {
   const handleRevert = () => {
     setSymbolInput(symbol);
   };
+
+  const handleSelectWatchlistSymbol = useCallback((newSymbol: string) => {
+    setSymbol(newSymbol);
+    setSymbolInput(newSymbol);
+    wsManager.current?.changeSymbol(newSymbol);
+  }, []);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
@@ -419,7 +531,7 @@ const AppContent = () => {
   ) => {
     if (newInterval !== null) {
       setTimeInterval(newInterval);
-      setCandles(candleStore.current.getCandles(newInterval));
+      setCandles(getCandleStore(symbol).getCandles(newInterval));
     }
   };
 
@@ -431,24 +543,6 @@ const AppContent = () => {
       setTimeFrame(newTimeFrame);
     }
   };
-
-  const handleSimulationToggle = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const enabled = e.target.checked;
-    setDummyEnabled(enabled);
-    
-    if (enabled && currentPrice) {
-      // Reset candle store
-      candleStore.current = new CandleStore();
-      
-      // Generate and load historical data
-      const historicalData = generateHistoricalCandles(currentPrice);
-      historicalData.forEach(trade => {
-        candleStore.current.addTrade(trade);
-      });
-      
-      setCandles(candleStore.current.getCandles(timeInterval));
-    }
-  }, [currentPrice, generateHistoricalCandles, timeInterval]);
 
   const handleIndicatorChange = (indicator: Indicator) => {
     setIndicators(prev => 
@@ -577,17 +671,12 @@ const AppContent = () => {
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
               <Switch
                 checked={wsEnabled}
-                onChange={(e) => {
-                  setWsEnabled(e.target.checked);
-                  if (e.target.checked) {
-                    setDummyEnabled(false);
-                  }
-                }}
+                onChange={(e) => setWsEnabled(e.target.checked)}
                 color="success"
               />
-              <Typography 
-                variant="body2" 
-                sx={{ 
+              <Typography
+                variant="body2"
+                sx={{
                   color: wsEnabled ? 'success.main' : 'text.secondary',
                   fontWeight: wsEnabled ? 'bold' : 'normal'
                 }}
@@ -596,33 +685,64 @@ const AppContent = () => {
               </Typography>
             </Box>
             {!wsEnabled && (
-              <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                <Switch
-                  checked={dummyEnabled}
-                  onChange={handleSimulationToggle}
-                  color="warning"
-                />
-                <Typography 
-                  variant="body2" 
-                  sx={{ 
-                    color: dummyEnabled ? 'warning.main' : 'text.secondary',
-                    fontWeight: dummyEnabled ? 'bold' : 'normal'
-                  }}
-                >
-                  Simulate
-                </Typography>
-              </Box>
+              <MuiTooltip title="Refresh price">
+                <span>
+                  <IconButton size="small" onClick={fetchCurrentPrice} disabled={isLoading} color="primary">
+                    <RefreshIcon />
+                  </IconButton>
+                </span>
+              </MuiTooltip>
             )}
             {wsEnabled && connectionState === 'connecting' && (
               <CircularProgress size={16} />
             )}
           </Box>
           <Box sx={{ flexGrow: 1 }} />
+          <MuiTooltip title="Watchlist / Strategy / Ideas">
+            <IconButton onClick={() => setSidebarOpen(true)} color="inherit" sx={{ mr: 1 }}>
+              <ListAltIcon />
+            </IconButton>
+          </MuiTooltip>
           <IconButton onClick={toggleTheme} color="inherit" sx={{ mr: 2 }}>
             {isDarkMode ? <Brightness7 /> : <Brightness4 />}
           </IconButton>
         </Toolbar>
       </AppBar>
+      <Drawer anchor="right" open={sidebarOpen} onClose={() => setSidebarOpen(false)}>
+        <Box sx={{ width: 420, height: '100%', display: 'flex', flexDirection: 'column' }}>
+          <Tabs
+            value={sidebarTab}
+            onChange={(_, newTab) => setSidebarTab(newTab)}
+            variant="scrollable"
+            scrollButtons="auto"
+          >
+            <Tab label="Watchlist" value="watchlist" />
+            <Tab label="Strategy" value="strategy" />
+            <Tab label="Ideas" value="ideas" />
+            <Tab label="Levels" value="levels" />
+            <Tab label="Alerts" value="alerts" />
+            <Tab label="Activity" value="activity" />
+          </Tabs>
+          <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
+            {sidebarTab === 'watchlist' && (
+              <WatchlistPanel
+                watchlist={watchlist}
+                activeSymbol={symbol}
+                onSelectSymbol={handleSelectWatchlistSymbol}
+                onAdd={handleAddWatchlistSymbol}
+                onRemove={handleRemoveWatchlistSymbol}
+              />
+            )}
+            {sidebarTab === 'strategy' && (
+              <StrategyPanel strategyText={strategyText} loading={strategyLoading} error={strategyError} />
+            )}
+            {sidebarTab === 'ideas' && <IdeasPanel ideas={tradeIdeas} lastUpdated={analysisDataUpdatedAt} />}
+            {sidebarTab === 'levels' && <LevelsPanel levels={levels} />}
+            {sidebarTab === 'alerts' && <AlertsPanel alerts={alerts} onAcknowledge={handleAcknowledgeAlert} />}
+            {sidebarTab === 'activity' && <ActivityPanel entries={analysisLog} />}
+          </Box>
+        </Box>
+      </Drawer>
       <Container 
         maxWidth={false} 
         sx={{ 
@@ -647,11 +767,7 @@ const AppContent = () => {
           {(connectionState === 'connecting' || currentPriceValue == null) ? (
             <Skeleton variant="text" width={100} sx={{ fontSize: '1.5rem' }} />
           ) : (
-            <PriceContainer 
-              sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
-              onMouseEnter={() => setIsPriceHovered(true)}
-              onMouseLeave={() => setIsPriceHovered(false)}
-            >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Typography 
                 variant="h5" 
                 sx={{ 
@@ -691,18 +807,7 @@ const AppContent = () => {
                   </>
                 )}
               </Typography>
-              {!wsEnabled && !dummyEnabled && (
-                <IconButton 
-                  className="refresh-button"
-                  size="small" 
-                  onClick={fetchCurrentPrice} 
-                  disabled={isLoading}
-                  color="primary"
-                >
-                  <RefreshIcon />
-                </IconButton>
-              )}
-            </PriceContainer>
+            </Box>
           )}
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
@@ -835,7 +940,7 @@ const AppContent = () => {
                 />
                 <Tooltip content={<ChartTooltip />} />
                 {currentPriceValue && (
-                  <ReferenceLine 
+                  <ReferenceLine
                     y={currentPriceValue}
                     stroke={isCurrentCandleBullish(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
                     strokeDasharray="3 3"
@@ -846,6 +951,23 @@ const AppContent = () => {
                     }}
                   />
                 )}
+                {levels
+                  .filter((level) => level.active && level.symbol === symbol)
+                  .map((level) => (
+                    <ReferenceLine
+                      key={level.id}
+                      y={level.price}
+                      stroke={level.type === 'resistance' ? CHART_COLORS.priceDown : CHART_COLORS.priceUp}
+                      strokeDasharray="6 3"
+                      strokeOpacity={0.5}
+                      label={{
+                        value: level.label,
+                        position: 'insideLeft',
+                        fill: level.type === 'resistance' ? CHART_COLORS.priceDown : CHART_COLORS.priceUp,
+                        fontSize: 11,
+                      }}
+                    />
+                  ))}
                 {(chartMode === 'candles' || chartMode === 'both') && (
                   <Bar
                     dataKey={d => [d.low, d.high]}
@@ -1102,7 +1224,7 @@ const AppContent = () => {
                 Time: {new Date(trade.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </Typography>
               <Typography variant="body1">
-                Conditions: {trade.conditions.join(', ')}
+                Conditions: {trade.conditions?.join(', ') || '—'}
               </Typography>
             </>
           )}
