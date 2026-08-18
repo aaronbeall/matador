@@ -2,7 +2,6 @@ import type { Plugin, Connect } from 'vite';
 import type { ServerResponse } from 'http';
 import fs from 'fs';
 import path from 'path';
-import { getAnalysisSnapshot } from './marketData/cache';
 import { getSkills, skillsDir } from './skillsReader';
 
 // Local-only dev API that reads/writes the gitignored data/ directory —
@@ -16,8 +15,10 @@ import { getSkills, skillsDir } from './skillsReader';
 // Plain JSON-array collections (watchlist, trade-ideas, levels, alerts,
 // analysis-log) all share the same GET-full-array / POST-replaces-array
 // shape, so they're handled generically below rather than one route
-// each. `strategy.md` and `candles/<symbol>.json` have their own shapes
-// and get dedicated handlers.
+// each. `strategy.md` has its own shape and gets a dedicated handler.
+// `data/candles/` (raw OHLCV cache + the annotated analysis.md) has no
+// HTTP route at all — nothing in the browser reads it; it's Node's own
+// cache (vite-plugins/marketData/cache.ts) and Claude's filesystem read.
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const CANDLES_DIR = path.join(DATA_DIR, 'candles');
@@ -197,26 +198,6 @@ export function localDataApi(): Plugin {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
         res.end(fs.readFileSync(STRATEGY_PATH, 'utf-8'));
-      });
-
-      // GET /api/candles/<SYMBOL>/analysis — the multi-timeframe
-      // AnalysisSnapshot (src/utils/analysis.ts), maintained by the
-      // background gap-reconciliation cache (vite-plugins/marketData/
-      // cache.ts). Read-only from here; cache.ts writes it directly on
-      // disk, no HTTP round-trip needed since both run in the same
-      // Node process.
-      server.middlewares.use('/api/candles', (req, res) => {
-        const segments = (req.url || '/').split('/').filter(Boolean);
-        const [symbol, subroute] = segments;
-
-        if (req.method !== 'GET' || !symbol || subroute !== 'analysis') {
-          res.statusCode = 404;
-          res.end();
-          return;
-        }
-        const snapshot = getAnalysisSnapshot(symbol);
-        if (snapshot) sendJson(res, 200, snapshot);
-        else sendJson(res, 404, { error: `no analysis snapshot yet for ${symbol.toUpperCase()}` });
       });
     },
   };

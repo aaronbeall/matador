@@ -13,6 +13,11 @@ export type Candlestick = {
   // (they're not independently toggleable), so they get their own fields.
   signal?: number;
   histogram?: number;
+  // Analysis-only annotations (src/utils/analysis.ts) — not part of the
+  // chart's toggleable Indicator union since they're never rendered as a
+  // chart overlay, just read from data/candles/<symbol>/analysis.md.
+  atr14?: number;
+  patterns?: string[];
 } & {
   [K in Indicator]?: number;
 }

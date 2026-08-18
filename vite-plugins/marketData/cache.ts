@@ -2,21 +2,22 @@ import fs from 'fs';
 import path from 'path';
 import type { Candlestick, TimeInterval } from '../../src/types/Candlestick';
 import type { Watchlist } from '../../src/types/Watchlist';
-import type { AnalysisSnapshot } from '../../src/types/AnalysisSnapshot';
-import { computeAnalysisSnapshot } from '../../src/utils/analysis';
+import { computeAnalysisSnapshot, renderAnalysisMarkdown } from '../../src/utils/analysis';
 import { fetchBars, type AlpacaBar } from './alpaca';
 import { TIMEFRAMES, type TimeframeConfig } from './timeframes';
 
 // The gap-free multi-timeframe cache: one bounded, natively-fetched
-// Alpaca bar series per (symbol, timeframe), plus the enriched
-// multi-timeframe analysis snapshot derived from them. Maintained
-// proactively for the whole active watchlist (see reconcileWatchlist),
-// not just whatever symbol happens to be open live in the browser — that
-// was the actual gap this replaces candleStorage.ts to close.
+// Alpaca bar series per (symbol, timeframe), plus the fully annotated
+// multi-timeframe view rendered from them. Maintained proactively for the
+// whole active watchlist (see reconcileWatchlist), not just whatever
+// symbol happens to be open live in the browser — that was the actual gap
+// this replaces candleStorage.ts to close.
 //
-// Layout: data/candles/<SYMBOL>/<interval>.json (raw OHLCV, bounded to
-// that timeframe's lookback), data/candles/<SYMBOL>/analysis.json (the
-// AnalysisSnapshot find-trades reads).
+// Layout: data/candles/<SYMBOL>/<interval>.json (raw OHLCV only, bounded
+// to that timeframe's lookback — never gets indicator/pattern fields, so
+// the gap-reconciliation diff below stays a plain bar-for-bar comparison),
+// data/candles/<SYMBOL>/analysis.md (the annotated, multi-timeframe
+// markdown find-trades reads — see src/utils/analysis.ts).
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -32,7 +33,7 @@ function barsFilePath(symbol: string, interval: TimeInterval) {
 }
 
 function analysisFilePath(symbol: string) {
-  return path.join(symbolDir(symbol), 'analysis.json');
+  return path.join(symbolDir(symbol), 'analysis.md');
 }
 
 function readJson<T>(filePath: string, fallback: T): T {
@@ -53,12 +54,15 @@ export function getCachedBars(symbol: string, interval: TimeInterval): Candlesti
   return readJson<AlpacaBar[]>(barsFilePath(symbol, interval), []);
 }
 
-export function getAnalysisSnapshot(symbol: string): AnalysisSnapshot | null {
-  return readJson<AnalysisSnapshot | null>(analysisFilePath(symbol), null);
+export function getAnalysisMarkdown(symbol: string): string | null {
+  const filePath = analysisFilePath(symbol);
+  return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
 }
 
-export function saveAnalysisSnapshot(symbol: string, snapshot: AnalysisSnapshot) {
-  writeJson(analysisFilePath(symbol), snapshot);
+function writeAnalysisMarkdown(symbol: string, markdown: string) {
+  const filePath = analysisFilePath(symbol);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, markdown);
 }
 
 function pruneToLookback(bars: AlpacaBar[], lookbackDays: number): AlpacaBar[] {
@@ -130,7 +134,7 @@ export function recomputeAnalysis(symbol: string): void {
   ) as Record<TimeInterval, Candlestick[]>;
 
   const snapshot = computeAnalysisSnapshot(symbol, byTimeframe);
-  if (snapshot) saveAnalysisSnapshot(symbol, snapshot);
+  if (snapshot) writeAnalysisMarkdown(symbol, renderAnalysisMarkdown(snapshot));
 }
 
 export async function reconcileSymbol(keyId: string, secret: string, symbol: string): Promise<void> {

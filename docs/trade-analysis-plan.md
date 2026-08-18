@@ -45,10 +45,14 @@ trading data or strategy specifics get committed):
   Alpaca and kept gap-free by the background reconciliation cache (see
   "Live market data" below), each bounded to that timeframe's own
   lookback window rather than one ever-growing file.
-- `candles/<symbol>/analysis.json` — the computed `AnalysisSnapshot`, now
-  one block per timeframe (VWAP/EMA/RSI/MACD/ATR/patterns/swing levels
-  for each of `1m`…`1w`), written by Node — `find-trades` reads this
-  directly instead of recomputing any of it.
+- `candles/<symbol>/analysis.md` — the Claude-facing view: one markdown
+  table per timeframe (`1w`…`1m`), every cached candle as a row, annotated
+  with precomputed EMA/SMA/RSI/MACD/ATR/VWAP(intraday-only)/candlestick
+  patterns per row, written by Node. Deliberately *not* a summary —
+  `find-trades` reads the full annotated history and does its own
+  trend/momentum/level/cross-timeframe reasoning over it, the way it would
+  read a chart screenshot; Node precomputes only what's deterministic
+  (the indicator math, the pattern detection), never the judgment.
 
 The filesystem is the single source of truth. The Claude skill writes to
 it directly (filesystem access when chatting in-repo). The frontend
@@ -117,10 +121,11 @@ Node now owns this end to end (`vite-plugins/marketData/`):
   pushing candles to the browser — the single place this math runs. Only
   1m is fed by the live trade stream; `5m`/`15m`/`1h`/`1d`/`1w` come from
   the native Alpaca fetch above, not derived from 1m.
-- **Persists** live 1m candles + recomputes the multi-timeframe
-  `AnalysisSnapshot` (`src/utils/analysis.ts`) on a 10s timer while a
-  symbol has an active browser subscriber; the background cache above
-  covers every other watchlist symbol on its own 5-min cycle.
+- **Persists** live 1m candles + re-renders `analysis.md`
+  (`src/utils/analysis.ts`'s `computeAnalysisSnapshot` +
+  `renderAnalysisMarkdown`) on a 10s timer while a symbol has an active
+  browser subscriber; the background cache above covers every other
+  watchlist symbol on its own 5-min cycle.
 - **Serves the browser** over a local WebSocket at `/ws/market`, attached
   to the same underlying HTTP server Vite already runs (`{ noServer: true }`
   plus a manual `upgrade` listener scoped to that path — attaching via

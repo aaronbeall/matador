@@ -125,6 +125,19 @@ export const detectCandlePatterns = (candles: Candlestick[]): string[] => {
     .map(([name]) => name);
 };
 
+// Same pattern checks as detectCandlePatterns, but tags every candle with
+// whatever matched in the 10-bar window ending there, instead of checking
+// only the single most recent window. This is what lets the annotated
+// history (src/utils/analysis.ts) show a pattern in its actual place in
+// the sequence — e.g. "a doji three bars before this level broke" — rather
+// than only ever knowing about the most recent one.
+export const attachCandlePatterns = (candles: Candlestick[]): Candlestick[] => {
+  return candles.map((candle, i) => {
+    const window = candles.slice(Math.max(0, i - 9), i + 1);
+    return { ...candle, patterns: detectCandlePatterns(window) };
+  });
+};
+
 const indicatorCalculators: Record<Indicator, (candles: Candlestick[]) => number[]> = {
   vwap: calculateVWAP,
   ema9: (candles) => calculateEMA(candles, 9),
@@ -143,6 +156,14 @@ const indicatorCalculators: Record<Indicator, (candles: Candlestick[]) => number
 // to the browser, which just renders the fields — it doesn't recompute
 // them. See vite-plugins/marketData/service.ts and
 // docs/trade-analysis-plan.md.
+//
+// Returns fresh candle objects rather than mutating the input array's
+// elements — `[...candles]` alone only copies the array, not each element,
+// so writing `candlesWithIndicators[i][indicator] = value` used to mutate
+// whatever candle objects were passed in. That leaked into CandleStore's
+// own live 1m buckets (getCandles('1m') hands out its real object
+// references), which is why persisted 1m.json candles could end up with
+// indicator fields stuck on them that were never supposed to be there.
 export const attachIndicators = (
   candles: Candlestick[],
   wantedIndicators: Indicator[] = ALL_INDICATORS
@@ -167,5 +188,5 @@ export const attachIndicators = (
     }
 
     return candlesWithIndicators;
-  }, [...candles]);
+  }, candles.map((c) => ({ ...c })));
 };
