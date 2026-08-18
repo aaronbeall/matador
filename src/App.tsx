@@ -55,19 +55,21 @@ import {
   Timeline as LevelsIcon,
   Notifications as AlertsIcon,
   History as ActivityIcon,
+  Extension as SkillsIcon,
+  NotificationsActive as NotificationsOnIcon,
+  NotificationsOff as NotificationsOffIcon,
 } from '@mui/icons-material';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
-import { WebSocketManager } from './services/WebSocketManager';
+import { MarketDataClient, ExternalDataStatus } from './services/MarketDataClient';
 import { Trade } from './types/Trade';
-import { CandleStore } from './services/CandleStore';
 import { Candlestick, TimeInterval } from './types/Candlestick';
 import { styled } from '@mui/material/styles';
 import { TooltipProps } from 'recharts';
-import { 
-  ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine 
+import {
+  ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine
 } from 'recharts';
 import { Logo } from './components/Logo';
-import { calculateVWAP, calculateEMA, Indicator, calculateSMA, calculateMACD, calculateRSI } from './utils/indicators';
+import { Indicator } from './utils/indicators';
 import { CandlestickBar } from './components/CandlestickBar';
 import { ChartTooltip } from './components/ChartTooltip';
 import { CHART_COLORS } from './constants/colors';
@@ -81,36 +83,38 @@ import { IdeasPanel } from './components/TradeIdeas/IdeasPanel';
 import { LevelsPanel } from './components/Levels/LevelsPanel';
 import { AlertsPanel } from './components/Alerts/AlertsPanel';
 import { ActivityPanel } from './components/Activity/ActivityPanel';
+import { SkillsPanel } from './components/Skills/SkillsPanel';
 import { SidebarNav, SidebarNavItem } from './components/Sidebar/SidebarNav';
 import { SkillTip } from './components/Sidebar/SkillTip';
+import { ConnectionDiagnostics } from './components/ConnectionDiagnostics/ConnectionDiagnostics';
 import { WatchlistEntry } from './types/Watchlist';
 import { TradeIdea } from './types/TradeIdea';
 import { Level as LevelType } from './types/Level';
 import { Alert as AlertType } from './types/Alert';
 import { AnalysisLogEntry } from './types/AnalysisLog';
+import { Skill } from './types/Skill';
 import {
   getWatchlist,
   saveWatchlist,
   getStrategy,
-  persistCandles,
-  getPersistedCandles,
+  getQuote,
   getTradeIdeas,
   getLevels,
   getAlerts,
   saveAlerts,
   getAnalysisLog,
+  getSkills,
+  rebuildMarketData,
   subscribeToDataEvents,
 } from './services/dataApi';
 
 type TimeFrame = '15m' | '1h' | '3h' | '6h' | '1d' | '1w';
 type ChartMode = 'candles' | 'lines' | 'both';
-type SidebarTab = 'watchlist' | 'strategy' | 'ideas' | 'levels' | 'alerts' | 'activity';
+type SidebarTab = 'watchlist' | 'strategy' | 'ideas' | 'levels' | 'alerts' | 'activity' | 'skills';
 // Tabs whose "new since last looked" state is worth tracking — Watchlist
 // and Strategy are directly user/Claude-edited, not "arrived" content.
 const TRACKED_TABS: SidebarTab[] = ['ideas', 'levels', 'activity'];
 const LAST_SEEN_STORAGE_KEY = 'matador-sidebar-last-seen';
-
-const FINHUB_API_KEY = import.meta.env.VITE_FINHUB_API_KEY;
 
 const getTimeFrameMs = (timeFrame: TimeFrame) => 
   timeFrame === '15m' ? 15 * 60 * 1000 :
@@ -137,48 +141,15 @@ const calculateChanges = (candles: Candlestick[], timeFrame: TimeFrame) => {
   return { delta, percent };
 };
 
-const indicatorCalculators: Record<Indicator, (candles: Candlestick[]) => number[]> = {
-  vwap: calculateVWAP,
-  ema9: (candles) => calculateEMA(candles, 9),
-  ema21: (candles) => calculateEMA(candles, 21),
-  sma20: (candles) => calculateSMA(candles, 20),
-  sma50: (candles) => calculateSMA(candles, 50),
-  sma200: (candles) => calculateSMA(candles, 200),
-  macd: (candles) => calculateMACD(candles).map(v => v.macd),
-  rsi: (candles) => calculateRSI(candles),
-};
-
-// Add these calculations to the calculateIndicators function
-const calculateIndicators = (
-  candles: Candlestick[],
-  activeIndicators: Indicator[]
-): Candlestick[] => {
-  if (candles.length === 0) return candles;
-
-  return activeIndicators.reduce((candlesWithIndicators, indicator) => {
-    if (indicator === 'macd') {
-      const macdValues = calculateMACD(candles);
-      const offset = candlesWithIndicators.length - macdValues.length;
-      macdValues.forEach(({ macd }, i) => {
-        candlesWithIndicators[i + offset].macd = macd;
-      });
-    } else {
-      const values = indicatorCalculators[indicator](candles);
-      const offset = candlesWithIndicators.length - values.length;
-      values.forEach((value, i) => {
-        candlesWithIndicators[i + offset][indicator] = value;
-      });
-    }
-    
-    return candlesWithIndicators;
-  }, [...candles]);
-};
-
 const AppContent = () => {
   const [symbol, setSymbol] = useState('QQQ');
   const { isDarkMode, toggleTheme } = useTheme();
   const [trade, setTrade] = useState<Trade | null>(null);
   const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
+  // Node's connection to Alpaca, distinct from the browser↔Node
+  // connection above — Node pushes this through since the browser can't
+  // observe it any other way. Drives the connection-diagnostics UI.
+  const [externalDataStatus, setExternalDataStatus] = useState<ExternalDataStatus>('disconnected');
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -194,21 +165,11 @@ const AppContent = () => {
   const [timeInterval, setTimeInterval] = useState<TimeInterval>('1m');
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('1h');
   const [chartMode, setChartMode] = useState<ChartMode>('candles');
-  // One CandleStore per symbol, so switching symbols (e.g. from the
-  // Watchlist panel) while Live never mixes trades from different
-  // tickers into the same bucket.
-  const candleStores = useRef(new Map<string, CandleStore>());
-  const getCandleStore = useCallback((forSymbol: string) => {
-    if (!candleStores.current.has(forSymbol)) {
-      candleStores.current.set(forSymbol, new CandleStore());
-    }
-    return candleStores.current.get(forSymbol)!;
-  }, []);
   const [candles, setCandles] = useState<Candlestick[]>([]);
   const [indicators, setIndicators] = useState<Indicator[]>([]);
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
 
-  const wsManager = useRef<WebSocketManager | null>(null);
+  const marketDataClient = useRef<MarketDataClient | null>(null);
   const [wsEnabled, setWsEnabled] = useState(true);
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
   const currentPriceRef = useRef<number | null>(null);
@@ -238,6 +199,7 @@ const AppContent = () => {
   const [levels, setLevels] = useState<LevelType[]>([]);
   const [alerts, setAlerts] = useState<AlertType[]>([]);
   const [analysisLog, setAnalysisLog] = useState<AnalysisLogEntry[]>([]);
+  const [skills, setSkills] = useState<Skill[]>([]);
   const [analysisDataUpdatedAt, setAnalysisDataUpdatedAt] = useState<Date | null>(null);
 
   // When each tracked tab was last actually looked at (open drawer + that
@@ -289,16 +251,14 @@ const AppContent = () => {
     { value: 'levels', label: 'Levels', icon: <LevelsIcon />, badgeCount: levelsNewCount },
     { value: 'alerts', label: 'Alerts', icon: <AlertsIcon />, badgeCount: alertsUnacknowledgedCount },
     { value: 'activity', label: 'Activity', icon: <ActivityIcon />, badgeCount: activityNewCount },
+    { value: 'skills', label: 'Skills', icon: <SkillsIcon /> },
   ];
 
   const fetchCurrentPrice = useCallback(async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(
-        `https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINHUB_API_KEY}`
-      );
-      const data = await response.json();
-      setCurrentPrice(data.c);
+      const quote = await getQuote(symbol);
+      if (quote) setCurrentPrice(quote.c);
     } catch (error) {
       console.error('Error fetching price:', error);
       setSnackbar({
@@ -310,110 +270,64 @@ const AppContent = () => {
     setIsLoading(false);
   }, [symbol]);
 
-  // Reload our own previously-persisted candles (data/candles/<symbol>.json,
-  // written by the persistence effect below) — this is what actually
-  // survives a refresh, since Finnhub's free-tier REST candle endpoint
-  // does not reliably serve history (see fetchHistoricalData below).
-  const loadPersistedCandles = async (symbol: string) => {
-    try {
-      const persisted = await getPersistedCandles(symbol);
-      if (persisted.length > 0) {
-        getCandleStore(symbol).seedCandles(persisted);
-        setCandles(getCandleStore(symbol).getCandles(timeInterval));
-      }
-    } catch (error) {
-      console.error('Error loading persisted candles:', error);
-    }
-  };
-
-  const fetchHistoricalData = async (symbol: string) => {
-    const now = Date.now();
-    const yesterday = now - (24 * 60 * 60 * 1000);
-    
-    try {
-      const response = await fetch(
-        `https://finnhub.io/api/v1/stock/candle?symbol=${symbol}&resolution=1&from=${Math.floor(yesterday/1000)}&to=${Math.floor(now/1000)}&token=${FINHUB_API_KEY}`
-      );
-      const data = await response.json();
-      
-      if (data.s === 'ok' && data.t) {
-        // Convert Finnhub's OHLCV arrays directly to candles — preserves
-        // the real open/high/low instead of collapsing to a single price.
-        const historicalCandles: Candlestick[] = data.t.map((timestamp: number, i: number) => ({
-          timestamp: timestamp * 1000,
-          open: data.o[i],
-          high: data.h[i],
-          low: data.l[i],
-          close: data.c[i],
-          volume: data.v[i],
-        }));
-
-        getCandleStore(symbol).seedCandles(historicalCandles);
-        setCandles(getCandleStore(symbol).getCandles(timeInterval));
-      }
-    } catch (error) {
-      console.error('Error fetching historical data:', error);
-      setSnackbar({
-        open: true,
-        message: 'Error fetching historical data',
-        severity: 'error'
-      });
-    }
-  };
-
+  // Connects to Node's local market-data service (vite-plugins/marketData/service.ts)
+  // instead of Alpaca directly — Node owns the external connection,
+  // candle aggregation, and indicator computation now; this effect just
+  // owns the connect/disconnect lifecycle itself. Symbol and interval
+  // changes while already connected are handled by the effects below
+  // (they tell Node, they don't tear down and reopen this connection).
   useEffect(() => {
-    if (wsEnabled) {
-      setConnectionState('connecting');
-      wsManager.current = new WebSocketManager(
-        import.meta.env.VITE_FINHUB_API_KEY,
-        {
-          onConnected: async () => {
-            setConnectionState('connected');
-            setSnackbar({
-              open: true,
-              message: 'Connected to WebSocket server',
-              severity: 'success'
-            });
-            // Rehydrate from our own persisted history first (reliable,
-            // survives refresh), then try Finnhub's REST candles as a
-            // bonus (often unavailable on the free tier).
-            await loadPersistedCandles(symbol);
-            await fetchHistoricalData(symbol);
-          },
-          onDisconnected: () => {
-            setConnectionState('disconnected');
-            setSnackbar({
-              open: true,
-              message: 'Disconnected from WebSocket server',
-              severity: 'info'
-            });
-          },
-          onError: () => {
-            setConnectionState('disconnected');
-            setSnackbar({
-              open: true,
-              message: 'WebSocket connection error',
-              severity: 'error'
-            });
-          },
-          onTrade: (newTrade) => {
-            setTrade(newTrade);
-            getCandleStore(symbol).addTrade(newTrade);
-            setCandles(getCandleStore(symbol).getCandles(timeInterval));
-          }
-        }
-      );
-
-      wsManager.current.connect(symbol);
-      return () => {
-        wsManager.current?.disconnect();
-        setConnectionState('disconnected');
-      };
-    } else {
-      wsManager.current?.disconnect();
+    if (!wsEnabled) {
+      marketDataClient.current?.disconnect();
+      marketDataClient.current = null;
       setConnectionState('disconnected');
+      return;
     }
-  }, [wsEnabled, symbol, timeInterval]);
+
+    setConnectionState('connecting');
+    const client = new MarketDataClient({
+      onConnected: () => {
+        setConnectionState('connected');
+        setSnackbar({ open: true, message: 'Connected to server', severity: 'success' });
+      },
+      onDisconnected: () => {
+        setConnectionState('disconnected');
+        setSnackbar({ open: true, message: 'Disconnected from server', severity: 'info' });
+      },
+      onError: () => {
+        setConnectionState('disconnected');
+        setSnackbar({ open: true, message: 'Connection error', severity: 'error' });
+      },
+      onCandles: (newCandles) => setCandles(newCandles),
+      onTrade: (newTrade, newCandles) => {
+        setTrade(newTrade);
+        setCandles(newCandles);
+      },
+      onExternalStatus: (status) => setExternalDataStatus(status),
+    });
+    marketDataClient.current = client;
+    client.connect(symbol, timeInterval);
+
+    return () => {
+      client.disconnect();
+      setConnectionState('disconnected');
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsEnabled]);
+
+  // Switching symbols (e.g. clicking a different one in the Watchlist
+  // panel) while already connected: tell Node rather than tearing down
+  // and reopening the whole browser↔Node connection — Node handles
+  // unsubscribing the old symbol and subscribing the new one on the same
+  // connection. Also clear the previous symbol's trade/candles
+  // immediately so stale data doesn't linger on screen during the
+  // round-trip to Node's response.
+  useEffect(() => {
+    setTrade(null);
+    setCandles([]);
+    if (wsEnabled) marketDataClient.current?.changeSymbol(symbol, timeInterval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
 
   useEffect(() => {
     if (!wsEnabled) {
@@ -464,6 +378,9 @@ const AppContent = () => {
     if (!only || only === 'analysis-log') {
       tasks.push(getAnalysisLog().then(setAnalysisLog).catch(() => {}));
     }
+    if (!only || only === 'skills') {
+      tasks.push(getSkills().then(setSkills).catch(() => {}));
+    }
     await Promise.all(tasks);
     setAnalysisDataUpdatedAt(new Date());
   }, []);
@@ -505,15 +422,67 @@ const AppContent = () => {
     });
   }, []);
 
-  // Switching symbols (e.g. clicking a different one in the Watchlist
-  // panel) should immediately reflect that symbol's own data instead of
-  // leaving the previous symbol's candles — or last trade price — on
-  // screen until a new trade happens to arrive.
+  // Real desktop notifications for new alerts (the Web Notifications API
+  // — an actual OS-level popup, not just an in-app badge). This is the
+  // "system Claude can write to" half of alerts: the find-trades skill
+  // never needs to know notifications exist, it just writes
+  // data/alerts.json as usual — this effect turns any new, non-'info'
+  // entry into a real notification automatically.
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+    () => typeof Notification !== 'undefined' && Notification.permission === 'granted' && localStorage.getItem('matador-notifications-enabled') === 'true'
+  );
+  const seenAlertIds = useRef<Set<string> | null>(null);
+
   useEffect(() => {
-    setCandles(getCandleStore(symbol).getCandles(timeInterval));
-    setTrade(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol]);
+    // First run: remember every alert already on disk without notifying
+    // for them — only genuinely new arrivals after this point should pop.
+    if (seenAlertIds.current === null) {
+      seenAlertIds.current = new Set(alerts.map((a) => a.id));
+      return;
+    }
+    for (const alert of alerts) {
+      if (seenAlertIds.current.has(alert.id)) continue;
+      seenAlertIds.current.add(alert.id);
+      if (alert.severity === 'info') continue; // skip low-signal noise
+      if (!notificationsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') continue;
+
+      const notification = new Notification(`Matador · ${alert.symbol} (${alert.severity})`, {
+        body: alert.message,
+        tag: alert.id,
+      });
+      notification.onclick = () => {
+        window.focus();
+        setSidebarOpen(true);
+        setSidebarTab('alerts');
+      };
+    }
+  }, [alerts, notificationsEnabled]);
+
+  const handleToggleNotifications = useCallback(async () => {
+    if (notificationsEnabled) {
+      setNotificationsEnabled(false);
+      localStorage.setItem('matador-notifications-enabled', 'false');
+      return;
+    }
+    if (typeof Notification === 'undefined') return;
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      setNotificationsEnabled(true);
+      localStorage.setItem('matador-notifications-enabled', 'true');
+    }
+  }, [notificationsEnabled]);
+
+  const handleReconnectClient = useCallback(() => {
+    if (wsEnabled) marketDataClient.current?.connect(symbol, timeInterval);
+  }, [wsEnabled, symbol, timeInterval]);
+
+  const handleReconnectExternal = useCallback(() => {
+    marketDataClient.current?.reconnectExternal();
+  }, []);
+
+  const handleRebuildCache = useCallback(async (symbolToRebuild: string) => {
+    await rebuildMarketData(symbolToRebuild);
+  }, []);
 
   const handleAddWatchlistSymbol = useCallback((newSymbol: string) => {
     setWatchlist((prev) => {
@@ -532,30 +501,12 @@ const AppContent = () => {
     });
   }, []);
 
-  // Persist real streamed candles to disk periodically while live, so the
-  // find-trades skill has genuine historical data to work from instead of
-  // relying on the (often premium-gated) REST candle endpoint.
-  useEffect(() => {
-    if (!wsEnabled) return;
-    const persist = () => {
-      const oneMinCandles = getCandleStore(symbol).getCandles('1m');
-      if (oneMinCandles.length > 0) {
-        persistCandles(symbol, oneMinCandles).catch(() => {});
-      }
-    };
-    const interval = window.setInterval(persist, 10000);
-    return () => clearInterval(interval);
-  }, [wsEnabled, symbol]);
-
   const handleConfirm = useCallback(() => {
     const newSymbol = symbolInput.toUpperCase();
-    setSymbol(prevSymbol => {
-      wsManager.current?.changeSymbol(newSymbol);
-      // Blur after state is updated
-      requestAnimationFrame(() => {
-        (document.activeElement as HTMLElement)?.blur();
-      });
-      return newSymbol;
+    setSymbol(newSymbol);
+    // Blur after state is updated
+    requestAnimationFrame(() => {
+      (document.activeElement as HTMLElement)?.blur();
     });
   }, [symbolInput]);
 
@@ -566,7 +517,6 @@ const AppContent = () => {
   const handleSelectWatchlistSymbol = useCallback((newSymbol: string) => {
     setSymbol(newSymbol);
     setSymbolInput(newSymbol);
-    wsManager.current?.changeSymbol(newSymbol);
   }, []);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -592,7 +542,7 @@ const AppContent = () => {
   ) => {
     if (newInterval !== null) {
       setTimeInterval(newInterval);
-      setCandles(getCandleStore(symbol).getCandles(newInterval));
+      if (wsEnabled) marketDataClient.current?.setInterval(newInterval);
     }
   };
 
@@ -759,6 +709,19 @@ const AppContent = () => {
             )}
           </Box>
           <Box sx={{ flexGrow: 1 }} />
+          <ConnectionDiagnostics
+            connectionState={connectionState}
+            externalDataStatus={externalDataStatus}
+            symbol={symbol}
+            onReconnectClient={handleReconnectClient}
+            onReconnectExternal={handleReconnectExternal}
+            onRebuildCache={handleRebuildCache}
+          />
+          <MuiTooltip title={notificationsEnabled ? 'Desktop alerts on — click to disable' : 'Enable desktop alerts for new alerts'}>
+            <IconButton onClick={handleToggleNotifications} color="inherit" sx={{ mr: 1 }}>
+              {notificationsEnabled ? <NotificationsOnIcon /> : <NotificationsOffIcon />}
+            </IconButton>
+          </MuiTooltip>
           <MuiTooltip title="Watchlist / Strategy / Ideas">
             <IconButton onClick={() => setSidebarOpen(true)} color="inherit" sx={{ mr: 1 }}>
               <Badge variant="dot" color="error" overlap="circular" invisible={!hasAnyNewAnalysisData}>
@@ -820,7 +783,8 @@ const AppContent = () => {
               <>
                 <SkillTip>
                   Also written by <code>find-trades</code> — notable events like a new idea or price nearing a
-                  level. Acknowledging one here doesn't need a skill.
+                  level. Enable the bell icon (top right) for real desktop notifications on new ones. Acknowledging
+                  one here doesn't need a skill.
                 </SkillTip>
                 <AlertsPanel alerts={alerts} onAcknowledge={handleAcknowledgeAlert} />
               </>
@@ -832,6 +796,16 @@ const AppContent = () => {
                   setup found" results, so you can see what actually ran.
                 </SkillTip>
                 <ActivityPanel entries={analysisLog} />
+              </>
+            )}
+            {sidebarTab === 'skills' && (
+              <>
+                <SkillTip>
+                  Documentation for every Claude skill available in this project, read straight from{' '}
+                  <code>.claude/skills/*/SKILL.md</code> — ask Claude to add or edit a skill and this updates
+                  itself.
+                </SkillTip>
+                <SkillsPanel skills={skills} />
               </>
             )}
           </Box>
@@ -851,7 +825,14 @@ const AppContent = () => {
         {wsEnabled && connectionState === 'disconnected' && (
           <Alert severity="error" sx={{ mb: 2 }}>
             <AlertTitle>Connection Error</AlertTitle>
-            WebSocket connection failed. Please check your internet connection or try again later.
+            Lost connection to the server. Use the connection icon (top right) to reconnect or check its diagnostics.
+          </Alert>
+        )}
+        {wsEnabled && connectionState === 'connected' && externalDataStatus !== 'connected' && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            <AlertTitle>Market Data Unavailable</AlertTitle>
+            Connected to the server, but it can't reach the live data provider ({externalDataStatus}). Use the
+            connection icon (top right) to retry.
           </Alert>
         )}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
@@ -1013,7 +994,7 @@ const AppContent = () => {
         <Box sx={{ flexGrow: 1, minHeight: '400px', display: 'flex', flexDirection: 'column', gap: 2 }}>
           <Box sx={{ flexGrow: 1, minHeight: '60%' }}>
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={calculateIndicators(getFilteredCandles(candles, timeFrame), indicators)}>
+              <ComposedChart data={getFilteredCandles(candles, timeFrame)}>
                 <CartesianGrid 
                   strokeDasharray="3 3" 
                   stroke="rgba(128, 128, 128, 0.2)" 
@@ -1192,7 +1173,7 @@ const AppContent = () => {
           {indicators.includes('macd') && (
             <Box sx={{ height: '20%' }}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={calculateMACD(getFilteredCandles(candles, timeFrame))} >
+                <ComposedChart data={getFilteredCandles(candles, timeFrame)} >
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.2)" />
                   <XAxis 
                     dataKey="timestamp"
@@ -1233,7 +1214,7 @@ const AppContent = () => {
           {indicators.includes('rsi') && (
             <Box sx={{ height: '20%' }}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={calculateIndicators(getFilteredCandles(candles, timeFrame), ['rsi'])} >
+                <ComposedChart data={getFilteredCandles(candles, timeFrame)} >
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.2)" />
                   <XAxis 
                     dataKey="timestamp"

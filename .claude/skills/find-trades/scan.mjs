@@ -1,24 +1,28 @@
 #!/usr/bin/env node
-// Computes a compact indicator snapshot for one symbol from its persisted
-// candle history (data/candles/<SYMBOL>.json — real candles accumulated
-// from the app's live WebSocket feed, written by vite-plugins/localDataApi.ts).
+// Reads and prints the AnalysisSnapshot the running frontend already
+// computed for a symbol — data/candles/<SYMBOL>/analysis.json, written
+// by src/utils/analysis.ts every ~10s while Live is on. This script does
+// NOT compute anything itself: the frontend is the single source of
+// truth for the mechanical math (VWAP/EMA/RSI/MACD/ATR/candle patterns/
+// swing levels), since that's the same code driving the chart the user
+// is actually looking at. Duplicating that math here risked silent drift
+// between what find-trades sees and what's on screen — see
+// docs/trade-analysis-plan.md.
 //
-// This intentionally does ONLY deterministic numeric feature extraction —
-// it does not judge whether a setup qualifies. That evaluation against
-// data/strategy.md's rules is done by whoever invokes this (the find-trades
-// skill), reading the JSON this prints to stdout. See docs/trade-analysis-plan.md
-// and the "how well does raw numeric data work" discussion it's based on.
+// This is a convenience CLI for quick manual checks; Claude can also
+// just read the JSON file directly (filesystem access when in-repo) —
+// this script adds a staleness check on top of that.
 //
 // Usage: node scan.mjs <SYMBOL>
 
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { vwap, ema, sma, MACD, RSI } from 'technicalindicators';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-const CANDLES_DIR = path.join(REPO_ROOT, 'data', 'candles');
+
+const STALE_AFTER_MS = 5 * 60 * 1000; // 5 minutes — persist runs every ~10s while Live
 
 const symbol = process.argv[2];
 if (!symbol) {
@@ -26,88 +30,35 @@ if (!symbol) {
   process.exit(1);
 }
 
-const filePath = path.join(CANDLES_DIR, `${symbol.toUpperCase()}.json`);
-
 function output(obj) {
   console.log(JSON.stringify(obj, null, 2));
 }
 
+const filePath = path.join(REPO_ROOT, 'data', 'candles', symbol.toUpperCase(), 'analysis.json');
+
 if (!fs.existsSync(filePath)) {
   output({
     symbol: symbol.toUpperCase(),
-    error: 'no persisted candle data — open the app, enable Live, and let it stream for a while first',
+    error:
+      'no analysis snapshot yet — open the app, select this symbol, enable Live, and let it stream for a while first',
   });
   process.exit(0);
 }
 
-const candles = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-const MIN_BARS = 2;
-const FULL_CONFIDENCE_BARS = 30; // enough for all indicators (MACD needs the most: ~26+9)
-if (candles.length < MIN_BARS) {
+let snapshot;
+try {
+  snapshot = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+} catch (err) {
+  output({ symbol: symbol.toUpperCase(), error: `analysis.json is corrupt: ${err.message}` });
+  process.exit(0);
+}
+
+const ageMs = Date.now() - Date.parse(snapshot.computedAt);
+if (Number.isNaN(ageMs) || ageMs > STALE_AFTER_MS) {
   output({
-    symbol: symbol.toUpperCase(),
-    error: `insufficient candle history (${candles.length} bars, need ${MIN_BARS}+)`,
-    barCount: candles.length,
+    ...snapshot,
+    staleWarning: `computed ${Math.round(ageMs / 60000)} min ago — the app may not currently have this symbol selected with Live on. Treat this snapshot with caution.`,
   });
-  process.exit(0);
+} else {
+  output(snapshot);
 }
-
-const closes = candles.map((c) => c.close);
-const highs = candles.map((c) => c.high);
-const lows = candles.map((c) => c.low);
-const volumes = candles.map((c) => c.volume);
-const last = (arr) => (arr.length ? arr[arr.length - 1] : null);
-
-const vwapSeries = vwap({ high: highs, low: lows, close: closes, volume: volumes });
-const ema9Series = ema({ period: 9, values: closes });
-const ema21Series = ema({ period: 21, values: closes });
-const sma20Series = sma({ period: 20, values: closes });
-const rsi14Series = RSI.calculate({ values: closes, period: 14 });
-const macdSeries = MACD.calculate({
-  values: closes,
-  fastPeriod: 12,
-  slowPeriod: 26,
-  signalPeriod: 9,
-  SimpleMAOscillator: false,
-  SimpleMASignal: false,
-});
-
-const lookback = candles.slice(-30);
-const swingHigh30 = Math.max(...lookback.map((c) => c.high));
-const swingLow30 = Math.min(...lookback.map((c) => c.low));
-const avgVolume20 = volumes.slice(-20).reduce((a, b) => a + b, 0) / Math.min(20, volumes.length);
-
-// Opening range (first 30 min of the persisted window, as a proxy for
-// today's opening range — good enough while history is limited to
-// whatever's been streamed live).
-const openingRangeCandles = candles.slice(0, Math.min(30, candles.length));
-const openingRangeHigh = Math.max(...openingRangeCandles.map((c) => c.high));
-const openingRangeLow = Math.min(...openingRangeCandles.map((c) => c.low));
-
-const lastClose = last(closes);
-const lastVwap = last(vwapSeries);
-const lastEma9 = last(ema9Series);
-const lastEma21 = last(ema21Series);
-
-output({
-  symbol: symbol.toUpperCase(),
-  barCount: candles.length,
-  dataQuality: candles.length >= FULL_CONFIDENCE_BARS ? 'ok' : 'thin — indicators below may be null or unreliable until more live history accumulates',
-  lastTimestamp: last(candles).timestamp,
-  close: lastClose,
-  vwap: lastVwap,
-  priceVsVwapPct: lastVwap ? ((lastClose - lastVwap) / lastVwap) * 100 : null,
-  ema9: lastEma9,
-  ema21: lastEma21,
-  emaTrend: lastEma9 != null && lastEma21 != null ? (lastEma9 > lastEma21 ? 'up' : 'down') : null,
-  sma20: last(sma20Series),
-  rsi14: last(rsi14Series),
-  macd: last(macdSeries) ?? null,
-  swingHigh30,
-  swingLow30,
-  openingRangeHigh,
-  openingRangeLow,
-  lastVolume: last(volumes),
-  avgVolume20,
-  volumeVsAvgPct: avgVolume20 ? ((last(volumes) - avgVolume20) / avgVolume20) * 100 : null,
-});

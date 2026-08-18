@@ -18,18 +18,27 @@
 # Roadmap
 
 ## MVP
-- [ ] Charting view to monitor live trading (Candles, Lines, Volume)
-- [ ] Chart indicators (EMA, VWAP, MACD, RSI)
-- [ ] Chart drawings (levels, trendlines, etc)
-- [ ] Signal detection and alerts (bullish/bearish candle patterns, crossovers, price action, crossovers, etc)
+- [x] Charting view to monitor live trading (Candles, Lines, Volume) — real-time, backed by Node's market data service (see below); historical depth is now reliable (Alpaca, not Finnhub's gated free tier)
+- [x] Chart indicators (EMA, VWAP, MACD, RSI) — computed server-side once, pushed to the chart pre-enriched
+- [x] Chart drawings (levels, trendlines, etc) — active support/resistance levels render as reference lines on the chart
+- [ ] Signal detection and alerts (bullish/bearish candle patterns, crossovers, price action, crossovers, etc) — candle pattern detection exists in the analysis snapshot (see below) but isn't yet surfaced as its own chart marker/alert type
 - [x] AI powered suggestions (levels, setups, entries, exits, etc) — core loop built, see [docs/trade-analysis-plan.md](docs/trade-analysis-plan.md)
-  - [x] State layer: gitignored `data/` dir (`watchlist.json`, `strategy.md`, `trade-ideas.json`, `levels.json`, `alerts.json`, `analysis-log.json`, `candles/<symbol>.json`)
+  - [x] State layer: gitignored `data/` dir (`watchlist.json`, `strategy.md`, `trade-ideas.json`, `levels.json`, `alerts.json`, `analysis-log.json`, `candles/<symbol>/<interval>.json` per maintained timeframe)
   - [x] Bridge: Vite dev-server plugin with local API routes + SSE push (`/api/events`) so the UI updates the moment a file changes
   - [x] `find-trades` Claude skill: on-demand scan of watchlist against `strategy.md`; writes trade ideas, levels, alerts, and a run log — live-validated against real market data
-  - [x] Frontend: Watchlist, Strategy, Ideas, Levels, Alerts, Activity panels; active levels render as reference lines on the chart; kept fresh via SSE push + refetch-on-focus + 60s poll fallback
-  - [ ] Multi-symbol simultaneous streaming — only the on-screen chart symbol accumulates live history today; the rest of the watchlist doesn't, until this is fixed
+  - [x] Frontend: Watchlist, Strategy, Ideas, Levels, Alerts, Activity, Skills panels (vertical icon nav with "new" badges + per-panel skill tips); active levels render as reference lines on the chart; kept fresh via SSE push + refetch-on-focus + 60s poll fallback. Skills tab reads `.claude/skills/*/SKILL.md` directly — documents itself, nothing to hand-maintain
+  - [x] Candle storage split by symbol + timeframe (`1m`/`5m`/`15m`/`1h`/`1d`/`1w`), each natively fetched from Alpaca and bounded to its own lookback window (was: single JSON blob, 24h cutoff, no swing-timeframe history at all; then: per-day 1m files + a derived daily rollup, superseded by native per-timeframe fetch)
+  - [x] ATR14 and candlestick pattern detection (engulfing, doji, hammer, morning/evening star, shooting star) added to `scan.mjs` — ATR for stop-sizing sanity checks, patterns as confirmation signals
+  - [x] Live market data moved server-side (`vite-plugins/marketData/`) — Node owns the market data connection (WS + REST), candle aggregation, and all indicator computation; the browser no longer talks to the provider or computes anything itself, just renders what Node pushes over a local `/ws/market` WebSocket. Fixes: API key no longer shipped to the browser bundle; indicator math had two independent implementations (chart vs. analysis snapshot) that could silently drift, now there's exactly one
+  - [x] Connection lifecycle: the live trade WS connects on first Live subscribe, disconnects ~45s after the last subscriber leaves (survives a quick page refresh, cleans up a genuinely closed tab) — explicit and supervised, not an always-on background connection
+  - [x] Connection diagnostics UI: separate status + manual reconnect for browser↔Node and Node↔provider (top-right connection icon), plus a manual "rebuild cache" action to force-clear and re-fetch a symbol's history — "it says Live but nothing's moving" (or "this data looks wrong") is now diagnosable and fixable from the UI
+  - [x] Real desktop notifications (Web Notifications API) for new non-info alerts, opt-in via the bell icon — `data/alerts.json` is the only thing any skill needs to write to; the notification system is generic on top of it
+  - [x] Switched data provider from Finnhub to Alpaca (IEX feed) — Finnhub's free tier didn't reliably serve historical REST data, so a symbol had zero history until it had been watched live for a while; Alpaca's historical bars aren't gated
+  - [x] Proactive, gap-free multi-timeframe cache (`vite-plugins/marketData/cache.ts`) — every active watchlist symbol gets `1m`/`5m`/`15m`/`1h`/`1d`/`1w` history maintained in the background (startup, every 5 min, and immediately on watchlist change), independent of whether anyone has that symbol open live. This is what actually unblocks `find-trades` from needing a chart opened first — closes the historical-depth limitation flagged above
+  - [ ] Multi-symbol simultaneous **live-tick** streaming — the background cache above covers history/structure for the whole watchlist via periodic REST, but the realtime WS trade stream is still single-symbol, subscriber-driven (whichever symbol is on screen with Live on); watching the whole watchlist tick-by-tick in the background is still a separate, unbuilt feature
   - [ ] Per-idea chart overlay: entry/stop/target reference lines + trigger marker for a *specific* trade idea (levels already render; this is the idea-specific layer on top)
   - [ ] Ideas panel write-back: click to mark taken/skipped/stopped-out/target-hit (Alerts panel already supports acknowledge; Ideas doesn't yet)
+  - [ ] Still-open prediction-quality gaps (see conversation): relative volume by time-of-day (not just trailing-bar average), market-wide correlation/regime context, news & earnings awareness, live bid/ask spread — bigger lifts than the quick wins above, not started
 - [ ] Configuration and local storage of user settings
 
 ## Autonomous Trading (Phase 2 — after the manual system above is built)

@@ -40,9 +40,15 @@ trading data or strategy specifics get committed):
 - `analysis-log.json` — a run log of what the skill actually did per
   symbol per invocation, including "no data" / "no qualifying setup" —
   so the UI shows the system's reasoning, not just its hits.
-- `candles/<symbol>.json` — real 1m candles persisted from the app's live
-  WebSocket feed (not from a paid REST history endpoint — see the
-  Frontend section below for why).
+- `candles/<symbol>/<interval>.json` — one file per maintained timeframe
+  (`1m`/`5m`/`15m`/`1h`/`1d`/`1w`), raw OHLCV bars fetched natively from
+  Alpaca and kept gap-free by the background reconciliation cache (see
+  "Live market data" below), each bounded to that timeframe's own
+  lookback window rather than one ever-growing file.
+- `candles/<symbol>/analysis.json` — the computed `AnalysisSnapshot`, now
+  one block per timeframe (VWAP/EMA/RSI/MACD/ATR/patterns/swing levels
+  for each of `1m`…`1w`), written by Node — `find-trades` reads this
+  directly instead of recomputing any of it.
 
 The filesystem is the single source of truth. The Claude skill writes to
 it directly (filesystem access when chatting in-repo). The frontend
@@ -69,6 +75,75 @@ focus-or-60s away from correct even if push fails outright.
 more conventional but one more thing to start/keep running for no real
 benefit at this scale. Also considered: WebSocket for the push channel —
 SSE is simpler for one-way server→browser and needs no extra dependency.)
+
+## Live market data (the chart itself)
+
+Originally the browser connected to Finnhub directly (REST + WebSocket),
+aggregated trades into candles, and computed indicators client-side, then
+POSTed the results to the bridge for `find-trades` to read. That put the
+same indicator math in two places (the chart's rendering and the
+analysis snapshot) with a real risk of the two drifting apart, shipped
+the API key to the browser bundle, and left `npm run dev` with no
+supervision over an external connection nobody explicitly asked for once
+the tab was gone. The provider has since moved to Alpaca (IEX feed) —
+Finnhub's free tier didn't reliably serve historical REST data, which
+meant a symbol had no history at all until it had been watched live for
+a while; Alpaca's historical bars aren't gated, which is what made the
+proactive cache below possible.
+
+Node now owns this end to end (`vite-plugins/marketData/`):
+
+- **Connects to Alpaca** (`alpaca.ts`) — WebSocket for live IEX trades,
+  REST for quotes and native per-timeframe historical bars. The API key
+  (`VITE_ALPACA_KEY_ID` / `VITE_ALPACA_SECRET_KEY`, read via
+  `server.config.env`) never reaches the browser — referenced only in
+  this Node-side code.
+- **Maintains a gap-free multi-timeframe cache** (`cache.ts`), proactively,
+  for every symbol in the active watchlist — not just whatever's on
+  screen. Six timeframes (`1m`/`5m`/`15m`/`1h`/`1d`/`1w`), each with its
+  own lookback window sized to what that timeframe is actually for (fast
+  timeframes: just enough recency to execute against structure; `1h`/
+  `1d`/`1w`: real depth, since that's where market structure lives — see
+  `timeframes.ts` for the exact table and reasoning). Alpaca is treated as
+  the gap oracle: rather than compute "expected" bars against a
+  hand-rolled trading calendar, each reconcile pass re-fetches the full
+  window and merges, erring toward re-fetch over cleverness. Runs on
+  server startup, every 5 min, and immediately when `watchlist.json`
+  changes.
+- **Aggregates live 1m candles** (`service.ts`, reusing
+  `src/services/CandleStore.ts` — the exact same class, just instantiated
+  server-side now instead of in a browser ref) and **computes every
+  indicator** (`attachIndicators` from `src/utils/indicators.ts`) before
+  pushing candles to the browser — the single place this math runs. Only
+  1m is fed by the live trade stream; `5m`/`15m`/`1h`/`1d`/`1w` come from
+  the native Alpaca fetch above, not derived from 1m.
+- **Persists** live 1m candles + recomputes the multi-timeframe
+  `AnalysisSnapshot` (`src/utils/analysis.ts`) on a 10s timer while a
+  symbol has an active browser subscriber; the background cache above
+  covers every other watchlist symbol on its own 5-min cycle.
+- **Serves the browser** over a local WebSocket at `/ws/market`, attached
+  to the same underlying HTTP server Vite already runs (`{ noServer: true }`
+  plus a manual `upgrade` listener scoped to that path — attaching via
+  `{ server, path }` directly collided with Vite's own HMR WebSocket on
+  the same server and put its client in a connect/disconnect loop).
+
+**Connection lifecycle is explicit, not always-on**: the live trade
+WebSocket only connects the first time a browser client subscribes to a
+symbol (Live turned on), and disconnects `UNSUBSCRIBE_GRACE_MS` (45s)
+after the last subscriber leaves — long enough that a page refresh
+doesn't churn the connection, short enough that a genuinely closed tab
+actually cleans up. Toggling Live off client-side, or the tab/process
+closing outright, both land on the same teardown path. The background
+multi-timeframe cache is a separate, always-on-a-schedule concern (REST,
+not a second streaming connection) — it doesn't affect this lifecycle.
+
+**Diagnostics**: two connections make up "is data actually flowing" —
+browser↔Node (the app's own WebSocket) and Node↔Alpaca (which only Node
+can see, pushed through as an `externalStatus` message). Both are shown
+with independent manual reconnect actions in the connection icon
+(top-right AppBar) — `src/components/ConnectionDiagnostics/`, which also
+has a "Rebuild cache" action to force-clear and re-fetch a symbol's
+history immediately instead of waiting for the next reconcile cycle.
 
 ## Skill
 

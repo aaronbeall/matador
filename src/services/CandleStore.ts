@@ -12,11 +12,19 @@ export class CandleStore {
   // single price point. See seedCandles() below.
   private baseCandles: Map<number, Candlestick> = new Map();
 
+  // 1d/1w are never actually requested here — this store only ever
+  // aggregates the live 1m trade stream up to 1h. Daily/weekly bars are
+  // fetched natively from Alpaca instead (see vite-plugins/marketData/
+  // cache.ts) since deriving them from a rolling 1m buffer would need
+  // months of retained 1m data for no benefit over Alpaca's own
+  // aggregation. Present here only so this satisfies TimeInterval fully.
   private timeIntervalMs: Record<TimeInterval, number> = {
     '1m': 60000,
     '5m': 300000,
     '15m': 900000,
-    '1h': 3600000
+    '1h': 3600000,
+    '1d': 86400000,
+    '1w': 604800000,
   };
 
   addTrade(trade: Trade) {

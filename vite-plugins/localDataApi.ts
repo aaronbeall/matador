@@ -1,7 +1,9 @@
-import type { IncomingMessage, ServerResponse } from 'http';
-import type { Plugin } from 'vite';
+import type { Plugin, Connect } from 'vite';
+import type { ServerResponse } from 'http';
 import fs from 'fs';
 import path from 'path';
+import { getAnalysisSnapshot } from './marketData/cache';
+import { getSkills, skillsDir } from './skillsReader';
 
 // Local-only dev API that reads/writes the gitignored data/ directory —
 // the shared state layer between the frontend and the find-trades skill
@@ -20,8 +22,6 @@ import path from 'path';
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const CANDLES_DIR = path.join(DATA_DIR, 'candles');
 const STRATEGY_PATH = path.join(DATA_DIR, 'strategy.md');
-
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 // route name -> filename. The route is also what gets reported to SSE
 // subscribers when the underlying file changes, so the frontend knows
@@ -42,7 +42,7 @@ function ensureDataFiles() {
   }
 }
 
-function readJsonBody(req: IncomingMessage): Promise<unknown> {
+function readJsonBody(req: Connect.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', (chunk) => (body += chunk));
@@ -61,10 +61,6 @@ function sendJson(res: ServerResponse, status: number, data: unknown) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify(data));
-}
-
-function candlePathFor(symbol: string) {
-  return path.join(CANDLES_DIR, `${symbol.toUpperCase()}.json`);
 }
 
 // --- SSE: push "this file changed" notices to the browser -----------------
@@ -101,9 +97,10 @@ function watchDataDir() {
         broadcast('strategy');
       } else if (filenameToRoute.has(filename)) {
         broadcast(filenameToRoute.get(filename)!);
-      } else if (filename.startsWith('candles' + path.sep)) {
-        const symbol = path.basename(filename, '.json');
-        broadcast(`candles/${symbol}`);
+      } else {
+        // candles/<SYMBOL>/<date-or-daily>.json
+        const parts = filename.split(path.sep);
+        if (parts[0] === 'candles' && parts[1]) broadcast(`candles/${parts[1]}`);
       }
     });
   } catch (err) {
@@ -113,12 +110,33 @@ function watchDataDir() {
   }
 }
 
+function watchSkillsDir() {
+  if (!fs.existsSync(skillsDir())) return;
+  try {
+    fs.watch(skillsDir(), { recursive: true }, () => broadcast('skills'));
+  } catch (err) {
+    console.warn('[local-data-api] fs.watch on .claude/skills unavailable:', err);
+  }
+}
+
 export function localDataApi(): Plugin {
   return {
     name: 'local-data-api',
     configureServer(server) {
       ensureDataFiles();
       watchDataDir();
+      watchSkillsDir();
+
+      // GET the list of Claude skills for this project (.claude/skills/*/SKILL.md)
+      // — documentation, not app state; there's nothing to POST here.
+      server.middlewares.use('/api/skills', (req, res) => {
+        if (req.method !== 'GET') {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+        sendJson(res, 200, getSkills());
+      });
 
       // SSE stream — GET /api/events
       server.middlewares.use('/api/events', (req, res) => {
@@ -181,45 +199,24 @@ export function localDataApi(): Plugin {
         res.end(fs.readFileSync(STRATEGY_PATH, 'utf-8'));
       });
 
-      // GET/POST candles for a symbol — /api/candles/<SYMBOL>
-      // POST merges incoming candles (by timestamp) into the persisted
-      // rolling 24h file, so real history accumulates on disk from
-      // whatever the frontend has actually streamed live, since free-tier
-      // REST candle history is not reliably available (see conversation).
-      server.middlewares.use('/api/candles', async (req, res) => {
-        const symbol = (req.url || '/').split('/').filter(Boolean)[0];
-        if (!symbol) {
-          sendJson(res, 400, { error: 'symbol required, e.g. /api/candles/QQQ' });
+      // GET /api/candles/<SYMBOL>/analysis — the multi-timeframe
+      // AnalysisSnapshot (src/utils/analysis.ts), maintained by the
+      // background gap-reconciliation cache (vite-plugins/marketData/
+      // cache.ts). Read-only from here; cache.ts writes it directly on
+      // disk, no HTTP round-trip needed since both run in the same
+      // Node process.
+      server.middlewares.use('/api/candles', (req, res) => {
+        const segments = (req.url || '/').split('/').filter(Boolean);
+        const [symbol, subroute] = segments;
+
+        if (req.method !== 'GET' || !symbol || subroute !== 'analysis') {
+          res.statusCode = 404;
+          res.end();
           return;
         }
-        const filePath = candlePathFor(symbol);
-
-        if (req.method === 'GET') {
-          const candles = fs.existsSync(filePath)
-            ? JSON.parse(fs.readFileSync(filePath, 'utf-8'))
-            : [];
-          sendJson(res, 200, candles);
-        } else if (req.method === 'POST') {
-          try {
-            const incoming = (await readJsonBody(req)) as { timestamp: number }[] | null;
-            const existing: { timestamp: number }[] = fs.existsSync(filePath)
-              ? JSON.parse(fs.readFileSync(filePath, 'utf-8'))
-              : [];
-            const merged = new Map(existing.map((c) => [c.timestamp, c]));
-            for (const c of incoming ?? []) merged.set(c.timestamp, c);
-            const cutoff = Date.now() - ONE_DAY_MS;
-            const result = Array.from(merged.values())
-              .filter((c) => c.timestamp >= cutoff)
-              .sort((a, b) => a.timestamp - b.timestamp);
-            fs.writeFileSync(filePath, JSON.stringify(result, null, 2) + '\n');
-            sendJson(res, 200, { symbol: symbol.toUpperCase(), count: result.length });
-          } catch (err) {
-            sendJson(res, 400, { error: String(err) });
-          }
-        } else {
-          res.statusCode = 405;
-          res.end();
-        }
+        const snapshot = getAnalysisSnapshot(symbol);
+        if (snapshot) sendJson(res, 200, snapshot);
+        else sendJson(res, 404, { error: `no analysis snapshot yet for ${symbol.toUpperCase()}` });
       });
     },
   };

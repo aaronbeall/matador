@@ -21,37 +21,90 @@ On-demand only — there is no scheduled/cron version of this yet.
    - `data/trade-ideas.json`, `data/levels.json` — existing entries, to
      merge against rather than overwrite blindly.
 
-2. **Get a numeric snapshot per symbol.** For each active watchlist
-   symbol, run:
+2. **Read the numeric snapshot per symbol.** A background cache
+   (`vite-plugins/marketData/cache.ts`) proactively maintains six
+   timeframes — `1m`, `5m`, `15m`, `1h`, `1d`, `1w` — for every symbol in
+   the active watchlist, gap-checked against Alpaca on server startup,
+   every 5 min, and immediately when the watchlist changes. **You don't
+   need a symbol to have been opened live in the browser first anymore**
+   — this cache runs regardless. It computes the snapshot using the exact
+   same code (`src/utils/analysis.ts`) that enriches the candles pushed to
+   the chart, and writes it to `data/candles/<SYMBOL>/analysis.json`.
+   **You don't recompute anything here** — read the file directly, or run
+   the convenience wrapper which adds a staleness check:
    ```
    node .claude/skills/find-trades/scan.mjs <SYMBOL>
    ```
-   This does deterministic feature extraction only (VWAP, EMA9/21, SMA20,
-   RSI14, MACD, 30-bar swing high/low, opening-range high/low, volume vs.
-   20-bar average) from `data/candles/<SYMBOL>.json` — the real candle
-   history persisted from the app's live WebSocket feed. It does **not**
-   judge whether a setup qualifies; that's your job in step 3.
+   This is a deliberate split: Node owns 100% of the mechanical math
+   (deterministic, and guaranteed consistent with what's on screen and
+   what the chart itself uses); your job starts at step 3, judging what the
+   numbers mean. Never reimplement any of this math yourself from raw
+   candles — that reintroduces exactly the two-implementations-drift risk
+   this design removed.
 
-   If a symbol's snapshot comes back with an `error` field (no data yet),
-   skip it, note why in your summary, and log it (step 6) — don't just go
-   quiet. If it comes back with `dataQuality: 'thin...'`, treat any signal
-   read from it as low confidence — say so explicitly rather than
-   proposing a trade idea with unwarranted certainty. Don't fabricate
-   data to force a result either way.
+   The snapshot shape is `{ symbol, computedAt, timeframes: { '1m': {...},
+   '5m': {...}, '15m': {...}, '1h': {...}, '1d': {...}, '1w': {...} } }`
+   — a timeframe key is only present once that timeframe has cached bars,
+   and each block carries its own `dataQuality` (`'ok'` once it has ~30+
+   bars, else `'thin'`). If the snapshot is missing entirely (`error`
+   field) or carries a `staleWarning` (older than ~5 min), say so and
+   treat it as low/no confidence — don't proceed as if it were fresh.
+   Within a fresh snapshot, judge each timeframe block on its own
+   `dataQuality` rather than the snapshot as a whole — e.g. `1d`/`1w` can
+   be trustworthy even while a newly-added symbol's `15m` is still thin.
+   Per-timeframe fields:
+   - **VWAP, EMA9/21, SMA20, RSI14, MACD** — trend/momentum, as before.
+     `vwap`/`priceVsVwapPct`/`openingRangeHigh`/`openingRangeLow` are only
+     populated on `1m` (and vwap on `5m`/`15m`) — both are single-trading-
+     day concepts, `null` on `1h`/`1d`/`1w`.
+   - **`atr14`** — average true range. Use this for stop *sizing*, not
+     just stop *placement*: a stop derived from a swing level that's
+     narrower than ~1×ATR is probably just noise, not structure — treat
+     it skeptically rather than as a clean setup.
+   - **`candlePatterns`** — an array of any of bullish/bearish engulfing,
+     bullish/bearish hammer, doji, morning/evening star, shooting star
+     detected on the most recent bars of that timeframe. Treat these as
+     **confirmation**, not a standalone signal — e.g. a doji on `1d`
+     sitting right at an active support level is a much stronger "watch
+     this" than either fact alone; don't create a trade idea off a
+     pattern by itself.
+   - **`swingHigh`/`swingLow`** — on `1m`/`5m`/`15m`, the last 30 bars (a
+     recent, tactical read). On `1h`/`1d`/`1w`, the full cached window for
+     that timeframe — this is real market structure now, not an
+     approximation: use `1h`'s swingHigh/swingLow for multi-week levels,
+     `1d`'s for major S/R (up to ~500 days), `1w`'s for top-down bias (up
+     to ~2 years). Trust these in proportion to `barCount`/`dataQuality`
+     on that block, same as any other field.
+   - **`volumeVsAvgPct`** — last bar vs. its trailing 20-bar average, on
+     whichever timeframe you're reading. Still a rough measure, not
+     time-of-day-adjusted — a low reading late in a quiet stretch isn't
+     necessarily meaningful.
+
+   Either way (missing, stale, or a needed timeframe's `dataQuality:
+   'thin'`), skip the symbol or flag low confidence explicitly, note why
+   in your summary, and log it (step 6) — don't go quiet, and don't
+   fabricate a result to fill the gap.
 
 3. **Evaluate against strategy.md, per symbol.** Apply the rules exactly
    as written in `data/strategy.md`, not from memory — it may have been
    edited. In particular:
-   - **Market structure filter first**: read bias/trend from the
-     snapshot (EMA order, price vs. VWAP, recent swing structure). Skip
-     the symbol entirely if there's no clear directional read — no
-     forcing a trade into a filter that doesn't pass.
+   - **Market structure filter first**: read bias/trend top-down —
+     `1w`/`1d` EMA order and trend for the big picture, `1h` for the
+     multi-week swing structure actually in play, `1m`/`5m` for price vs.
+     VWAP and today's swing structure. Skip the symbol entirely if there's
+     no clear directional read across timeframes — no forcing a trade
+     into a filter that doesn't pass.
    - **Qualifying signal**: does the snapshot support one of momentum,
-     range, breakout, VWAP, mean-reversion, or ORB (using
-     `openingRangeHigh`/`openingRangeLow`)?
-   - **Structural stop**: derive from the snapshot (below/above VWAP,
-     the relevant EMA, or the swing high/low) — never an arbitrary
-     number.
+     range, breakout, VWAP, mean-reversion, or ORB (using `1m`'s
+     `openingRangeHigh`/`openingRangeLow`)? A `candlePatterns` hit at a
+     relevant level strengthens a case but never substitutes for one.
+   - **Structural stop**: derive from the snapshot (below/above VWAP, the
+     relevant EMA, or a swing high/low) — never an arbitrary number. Use
+     `1d`'s (or `1h`'s, for a tighter swing) `swingHigh`/`swingLow` for a
+     swing-timeframe idea, `1m`/`5m`'s for a scalp. Sanity-check the
+     resulting stop distance against that timeframe's `atr14`; if it's
+     much tighter than 1×ATR, it's likely to get stopped out by noise, not
+     the thesis being wrong — reconsider before proposing it.
    - **R:R threshold**: compute entry/stop/target from the above and
      confirm it clears the minimum in `strategy.md` (2:1 as of writing,
      but read the file — don't hardcode it here).
@@ -76,8 +129,10 @@ On-demand only — there is no scheduled/cron version of this yet.
 5. **Merge into `data/levels.json`.** Independent of whether a trade
    idea qualified — "levels to watch" is useful on its own. For each
    scanned symbol, write/update the structurally meaningful levels from
-   the snapshot: `swingHigh30`/`swingLow30`, `openingRangeHigh`/
-   `openingRangeLow`, and `vwap` (only when it's acting as clear
+   the snapshot, pulling from whichever timeframe block is relevant: `1m`'s
+   `swingHigh`/`swingLow` and `openingRangeHigh`/`openingRangeLow` for
+   intraday levels, `1h`'s or `1d`'s `swingHigh`/`swingLow` for
+   swing-timeframe levels, and `vwap` (only when it's acting as clear
    support/resistance, not just "price is near vwap"). Mark a symbol's
    prior levels `active: false` before adding the fresh set for that
    symbol, rather than letting stale ones accumulate. See
@@ -105,13 +160,22 @@ On-demand only — there is no scheduled/cron version of this yet.
 
 ## Notes
 
-- Free-tier Finnhub does not reliably serve historical intraday candles
-  via REST (`/stock/candle` returns "You don't have access to this
-  resource" on this project's key, confirmed 2026-08-17), so `scan.mjs`
-  deliberately reads only from `data/candles/*.json`, which the frontend
-  populates from the live trade stream while `Live` is enabled. A symbol
-  needs to have been streamed live for a while before it has enough
-  history to scan.
+- Data comes from Alpaca (IEX feed) now, not Finnhub — historical bars
+  are reliable and not gated, which is what makes proactive caching
+  possible at all. `scan.mjs` still just reads `data/candles/<SYMBOL>/`,
+  but that directory is now kept gap-free by a background cache
+  (`vite-plugins/marketData/cache.ts`) for the whole active watchlist —
+  **a symbol no longer needs to have been streamed live in the browser
+  first**. If a symbol was *just* added to the watchlist, give it a
+  moment (the cache reconciles new symbols immediately on watchlist
+  change, but the Alpaca fetch itself takes a few seconds per timeframe).
+- Candle storage is one bounded file per timeframe
+  (`data/candles/<SYMBOL>/<1m|5m|15m|1h|1d|1w>.json`), each capped to
+  that timeframe's own lookback window (2 days for `1m` up to ~2 years
+  for `1w` — see `vite-plugins/marketData/timeframes.ts` for the exact
+  table and reasoning) — no day-sharding or derived rollups anymore,
+  since every timeframe is fetched natively from Alpaca and reconciled
+  against it directly.
 - Never fabricate candle data, levels, or alerts to make a panel look
   populated. An honest "no data" or "no qualifying setup" is the correct
   output when that's what the numbers show — and now that outcome is
