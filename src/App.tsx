@@ -22,9 +22,9 @@ import {
   Tooltip as MuiTooltip,
   Menu,
   MenuItem,
-  FormControlLabel,
   Checkbox,
-  Badge,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import {
   Brightness4,
@@ -40,7 +40,6 @@ import {
   ArrowDropUp as ArrowUpIcon,
   ArrowDropDown as ArrowDownIcon,
   Settings as SettingsIcon,
-  ListAlt as ListAltIcon,
   Star as WatchlistIcon,
   MenuBook as StrategyIcon,
   Lightbulb as IdeasIcon,
@@ -50,7 +49,7 @@ import {
   Extension as SkillsIcon,
   NotificationsActive as NotificationsOnIcon,
   NotificationsOff as NotificationsOffIcon,
-  Close as CloseIcon,
+  ChevronRight as CollapseIcon,
 } from '@mui/icons-material';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { MarketDataClient, ExternalDataStatus } from './services/MarketDataClient';
@@ -196,9 +195,26 @@ const AppContent = () => {
 
   const [symbolInput, setSymbolInput] = useState(symbol);
   const [isFocused, setIsFocused] = useState(false);
-  const [timeInterval, setTimeInterval] = useState<TimeInterval>('1m');
-  const [timeFrame, setTimeFrame] = useState<TimeFrame>('1h');
-  const [chartMode, setChartMode] = useState<ChartMode>('candles');
+  const [timeInterval, setTimeInterval] = useState<TimeInterval>(() =>
+    readStoredString(TIME_INTERVAL_STORAGE_KEY, VALID_TIME_INTERVALS, '1m')
+  );
+  useEffect(() => {
+    localStorage.setItem(TIME_INTERVAL_STORAGE_KEY, timeInterval);
+  }, [timeInterval]);
+
+  const [timeFrame, setTimeFrame] = useState<TimeFrame>(() =>
+    readStoredString(TIME_FRAME_STORAGE_KEY, VALID_TIME_FRAMES, '1h')
+  );
+  useEffect(() => {
+    localStorage.setItem(TIME_FRAME_STORAGE_KEY, timeFrame);
+  }, [timeFrame]);
+
+  const [chartMode, setChartMode] = useState<ChartMode>(() =>
+    readStoredString(CHART_MODE_STORAGE_KEY, VALID_CHART_MODES, 'candles')
+  );
+  useEffect(() => {
+    localStorage.setItem(CHART_MODE_STORAGE_KEY, chartMode);
+  }, [chartMode]);
   const [candles, setCandles] = useState<Candlestick[]>([]);
   // Persisted the same way sidebarWidth/notifications-enabled already are
   // — read once at init with a validating fallback, written back on every
@@ -234,6 +250,7 @@ const AppContent = () => {
   };
 
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
+  const [menuTab, setMenuTab] = useState<'indicators' | 'patterns'>('indicators');
   // Horizontal price crosshair on the main chart — Recharts' Tooltip only
   // gives a vertical, nearest-candle crosshair out of the box; Y is
   // continuous, not categorical, so there's no built-in equivalent for
@@ -296,8 +313,34 @@ const AppContent = () => {
   // find-trades skill (or anything else) writes a file, a refetch on
   // window focus, and a slow poll as a fallback if the SSE connection
   // ever drops. See vite-plugins/localDataApi.ts.
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('watchlist');
+  const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY) === 'true');
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_OPEN_STORAGE_KEY, String(sidebarOpen));
+  }, [sidebarOpen]);
+
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() =>
+    readStoredString(SIDEBAR_TAB_STORAGE_KEY, VALID_SIDEBAR_TABS, 'watchlist')
+  );
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_TAB_STORAGE_KEY, sidebarTab);
+  }, [sidebarTab]);
+
+  // The nav rail is always visible — clicking an item opens the panel to
+  // that tab; clicking the tab that's already open collapses the panel
+  // instead (same as VSCode's activity bar), rather than needing a
+  // separate open/close control.
+  const handleSidebarNavClick = useCallback(
+    (value: string) => {
+      const tab = value as SidebarTab;
+      if (sidebarOpen && sidebarTab === tab) {
+        setSidebarOpen(false);
+      } else {
+        setSidebarTab(tab);
+        setSidebarOpen(true);
+      }
+    },
+    [sidebarOpen, sidebarTab]
+  );
   // Docked, resizable pane (not an overlay drawer) — width persists across
   // sessions the same way notification/last-seen preferences already do.
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -372,8 +415,6 @@ const AppContent = () => {
   ).length;
   const alertsUnacknowledgedCount = alerts.filter((a) => !a.acknowledged).length;
   const activityNewCount = analysisLog.filter((e) => e.timestamp > (lastSeenAt.activity ?? '')).length;
-  const hasAnyNewAnalysisData =
-    ideasNewCount > 0 || levelsNewCount > 0 || alertsUnacknowledgedCount > 0 || activityNewCount > 0;
 
   const sidebarNavItems: SidebarNavItem[] = [
     { value: 'watchlist', label: 'Watchlist', icon: <WatchlistIcon /> },
@@ -969,13 +1010,6 @@ const AppContent = () => {
               </IconButton>
             </MuiTooltip>
             <Divider orientation="vertical" flexItem sx={{ mx: 1, my: 1.5 }} />
-            <MuiTooltip title={sidebarOpen ? 'Close panel' : 'Watchlist / Strategy / Ideas'}>
-              <IconButton onClick={() => setSidebarOpen((open) => !open)} color="inherit">
-                <Badge variant="dot" color="error" overlap="circular" invisible={!hasAnyNewAnalysisData}>
-                  <ListAltIcon />
-                </Badge>
-              </IconButton>
-            </MuiTooltip>
             <IconButton onClick={toggleTheme} color="inherit">
               {isDarkMode ? <Brightness7 /> : <Brightness4 />}
             </IconButton>
@@ -1149,74 +1183,52 @@ const AppContent = () => {
             anchorEl={menuAnchor}
             open={Boolean(menuAnchor)}
             onClose={() => setMenuAnchor(null)}
-            slotProps={{ paper: { sx: { maxHeight: 480 } } }}
+            MenuListProps={{ dense: true, sx: { py: 0 } }}
+            slotProps={{ paper: { sx: { maxHeight: 420, width: 210 } } }}
           >
-            {Object.values(INDICATOR_DEFS).map(indicator => (
-              <MuiTooltip
-                key={indicator.id}
-                title={indicator.description}
-                placement="right"
-                arrow
-              >
-                <MenuItem>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={indicators.includes(indicator.id)}
-                        onChange={() => handleIndicatorChange(indicator.id)}
-                      />
-                    }
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Box
-                          sx={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: '50%',
-                            bgcolor: CHART_COLORS[indicator.id],
-                          }}
-                        />
-                        {indicator.name}
-                      </Box>
-                    }
-                  />
-                </MenuItem>
-              </MuiTooltip>
-            ))}
-            <Divider />
-            <Typography variant="overline" sx={{ px: 2, py: 0.5, display: 'block', color: 'text.secondary' }}>
-              Candle Patterns
-            </Typography>
-            {Object.entries(PATTERN_INFO).map(([key, info]) => (
-              <MuiTooltip key={key} title={info.meaning} placement="right" arrow>
-                <MenuItem>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={enabledPatterns.includes(key)}
-                        onChange={() => handlePatternToggle(key)}
-                      />
-                    }
-                    label={
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Box
-                          sx={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: '50%',
-                            bgcolor: getPatternColor(info.direction, info.strength),
-                          }}
-                        />
-                        {info.label}
-                        <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'capitalize' }}>
-                          · {info.direction}
-                        </Typography>
-                      </Box>
-                    }
-                  />
-                </MenuItem>
-              </MuiTooltip>
-            ))}
+            <Tabs
+              value={menuTab}
+              onChange={(_e, v) => setMenuTab(v)}
+              variant="fullWidth"
+              sx={{ minHeight: 32, position: 'sticky', top: 0, bgcolor: 'background.paper', zIndex: 1, '& .MuiTab-root': { minHeight: 32, py: 0, fontSize: '0.7rem' } }}
+            >
+              <Tab value="indicators" label="Indicators" />
+              <Tab value="patterns" label="Patterns" />
+            </Tabs>
+            {menuTab === 'indicators' &&
+              Object.values(INDICATOR_DEFS).map(indicator => (
+                <MuiTooltip key={indicator.id} title={indicator.description} placement="right" arrow>
+                  <MenuItem sx={{ minHeight: 26, py: 0.25, px: 1 }} onClick={() => handleIndicatorChange(indicator.id)}>
+                    <Checkbox
+                      size="small"
+                      checked={indicators.includes(indicator.id)}
+                      onChange={() => {}}
+                      sx={{ p: 0.25, mr: 0.75 }}
+                    />
+                    <Box
+                      sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: CHART_COLORS[indicator.id], mr: 0.75, flexShrink: 0 }}
+                    />
+                    <Typography variant="caption" noWrap>{indicator.name}</Typography>
+                  </MenuItem>
+                </MuiTooltip>
+              ))}
+            {menuTab === 'patterns' &&
+              Object.entries(PATTERN_INFO).map(([key, info]) => (
+                <MuiTooltip key={key} title={info.meaning} placement="right" arrow>
+                  <MenuItem sx={{ minHeight: 26, py: 0.25, px: 1 }} onClick={() => handlePatternToggle(key)}>
+                    <Checkbox
+                      size="small"
+                      checked={enabledPatterns.includes(key)}
+                      onChange={() => {}}
+                      sx={{ p: 0.25, mr: 0.75 }}
+                    />
+                    <Box
+                      sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: getPatternColor(info.direction, info.strength), mr: 0.75, flexShrink: 0 }}
+                    />
+                    <Typography variant="caption" noWrap>{info.label}</Typography>
+                  </MenuItem>
+                </MuiTooltip>
+              ))}
           </Menu>
         </Box>
         <Box sx={{ flexGrow: 1, minHeight: '400px', display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -1645,12 +1657,11 @@ const AppContent = () => {
             }}
           />
           <Box sx={{ width: sidebarWidth, flexShrink: 0, height: '100%', display: 'flex', bgcolor: 'background.paper' }}>
-            <SidebarNav items={sidebarNavItems} value={sidebarTab} onChange={(v) => setSidebarTab(v as SidebarTab)} />
             <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
               <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <MuiTooltip title="Close panel">
+                <MuiTooltip title="Collapse panel">
                   <IconButton size="small" onClick={() => setSidebarOpen(false)}>
-                    <CloseIcon fontSize="small" />
+                    <CollapseIcon fontSize="small" />
                   </IconButton>
                 </MuiTooltip>
               </Box>
@@ -1731,6 +1742,7 @@ const AppContent = () => {
           </Box>
         </>
       )}
+      <SidebarNav items={sidebarNavItems} value={sidebarOpen ? sidebarTab : false} onChange={handleSidebarNavClick} />
       </Box>
       <Snackbar
         open={snackbar.open}
