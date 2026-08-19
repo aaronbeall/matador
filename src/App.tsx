@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   AppBar, 
   Toolbar, 
@@ -119,9 +119,15 @@ const getTimeFrameMs = (timeFrame: TimeFrame) =>
   timeFrame === '1d' ? 24 * 60 * 60 * 1000 :
   7 * 24 * 60 * 60 * 1000;
 
+// Anchored on the latest candle actually present, not on wall-clock now —
+// with the market closed overnight/weekend, "now" can sit hours past the
+// last real trade, so a wall-clock trailing window would filter out all
+// the data even though it's right there. Anchoring on the data itself
+// means the window always contains the most recent bars we have.
 const getFilteredCandles = (candles: Candlestick[], timeFrame: TimeFrame) => {
-  const now = Date.now();
-  return candles.filter(c => c.timestamp > now - getTimeFrameMs(timeFrame));
+  if (!candles.length) return candles;
+  const anchor = candles[candles.length - 1].timestamp;
+  return candles.filter(c => c.timestamp > anchor - getTimeFrameMs(timeFrame));
 };
 
 const calculateChanges = (candles: Candlestick[], timeFrame: TimeFrame) => {
@@ -641,10 +647,35 @@ const AppContent = () => {
     }
   }, [timeFrame]);
 
-  const getXAxisDomain = useCallback(() => {
-    const now = Date.now();
-    return [now - getTimeFrameMs(timeFrame), now] as [number, number];
-  }, [timeFrame]);
+  // Computed once and shared by all three chart panels (main/MACD/RSI)
+  // instead of each calling getFilteredCandles independently — and the
+  // X-axis domain is derived from this same array's actual bounds rather
+  // than a separately-computed wall-clock window, so the axis can never
+  // disagree with what's actually plotted (which was letting data render
+  // squished or entirely outside the visible domain, hiding levels along
+  // with it, whenever the trading day had a gap in it).
+  const filteredCandles = useMemo(
+    () => getFilteredCandles(candles, timeFrame),
+    [candles, timeFrame],
+  );
+
+  const xAxisDomain = useMemo<[number, number]>(() => {
+    if (!filteredCandles.length) {
+      const now = Date.now();
+      return [now - getTimeFrameMs(timeFrame), now];
+    }
+    return [filteredCandles[0].timestamp, filteredCandles[filteredCandles.length - 1].timestamp];
+  }, [filteredCandles, timeFrame]);
+
+  // Only the bottom-most rendered panel shows time-axis tick labels — the
+  // panels above it keep their gridlines (for alignment) but not the
+  // labels, so three stacked charts don't each print their own row of
+  // (redundant, slightly misaligned) timestamps.
+  const bottomPanel: 'main' | 'macd' | 'rsi' = indicators.includes('rsi')
+    ? 'rsi'
+    : indicators.includes('macd')
+      ? 'macd'
+      : 'main';
 
   const isPriceUp = useCallback((candles: Candlestick[]) => {
     const filteredCandles = getFilteredCandles(candles, timeFrame);
@@ -1029,14 +1060,19 @@ const AppContent = () => {
         <Box sx={{ flexGrow: 1, minHeight: '400px', display: 'flex', flexDirection: 'column', gap: 2 }}>
           <Box sx={{ flexGrow: 1, minHeight: '60%', position: 'relative' }}>
             {displayCandle && (
-              <Box sx={{ position: 'absolute', top: 8, left: 8, zIndex: 2, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+              <Box sx={{ position: 'absolute', top: 8, left: 8, zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.5 }}>
                 <OhlcvLegend candle={displayCandle} />
                 <IndicatorLegend items={mainIndicatorItems} />
               </Box>
             )}
+            {filteredCandles.length === 0 ? (
+              <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Typography variant="body2" color="text.secondary">No data for this range yet</Typography>
+              </Box>
+            ) : (
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart
-                data={getFilteredCandles(candles, timeFrame)}
+                data={filteredCandles}
                 onMouseMove={(state: any) => {
                   handleChartMouseMove(state);
                   if (state?.chartY != null && priceScaleRef.current) {
@@ -1059,11 +1095,12 @@ const AppContent = () => {
                 <XAxis
                   dataKey="timestamp"
                   tickFormatter={formatXAxisTick}
-                  domain={getXAxisDomain()}
+                  tick={bottomPanel === 'main'}
+                  domain={xAxisDomain}
                   type="number"
                   scale="time"
-                  interval={timeFrame === '1w' ? 24 : 'preserveStartEnd'}
-                  minTickGap={50}
+                  interval="preserveStartEnd"
+                  minTickGap={60}
                 />
                 <YAxis
                   domain={['auto', 'auto']}
@@ -1240,8 +1277,9 @@ const AppContent = () => {
                 )}
               </ComposedChart>
             </ResponsiveContainer>
+            )}
           </Box>
-          
+
           {indicators.includes('macd') && (
             <Box sx={{ height: '20%', position: 'relative' }}>
               {displayCandle && (
@@ -1249,9 +1287,10 @@ const AppContent = () => {
                   <IndicatorLegend items={macdIndicatorItems} />
                 </Box>
               )}
+              {filteredCandles.length > 0 && (
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
-                  data={getFilteredCandles(candles, timeFrame)}
+                  data={filteredCandles}
                   onMouseMove={handleChartMouseMove}
                   onMouseLeave={handleChartMouseLeave}
                 >
@@ -1259,9 +1298,12 @@ const AppContent = () => {
                   <XAxis
                     dataKey="timestamp"
                     tickFormatter={formatXAxisTick}
-                    domain={getXAxisDomain()}
+                    tick={bottomPanel === 'macd'}
+                    domain={xAxisDomain}
                     type="number"
                     scale="time"
+                    interval="preserveStartEnd"
+                    minTickGap={60}
                   />
                   <YAxis orientation="right" />
                   {hoveredCandle && (
@@ -1291,6 +1333,7 @@ const AppContent = () => {
                   />
                 </ComposedChart>
               </ResponsiveContainer>
+              )}
             </Box>
           )}
           
@@ -1301,9 +1344,10 @@ const AppContent = () => {
                   <IndicatorLegend items={rsiIndicatorItems} />
                 </Box>
               )}
+              {filteredCandles.length > 0 && (
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
-                  data={getFilteredCandles(candles, timeFrame)}
+                  data={filteredCandles}
                   onMouseMove={handleChartMouseMove}
                   onMouseLeave={handleChartMouseLeave}
                 >
@@ -1311,9 +1355,12 @@ const AppContent = () => {
                   <XAxis
                     dataKey="timestamp"
                     tickFormatter={formatXAxisTick}
-                    domain={getXAxisDomain()}
+                    tick={bottomPanel === 'rsi'}
+                    domain={xAxisDomain}
                     type="number"
                     scale="time"
+                    interval="preserveStartEnd"
+                    minTickGap={60}
                   />
                   <YAxis
                     orientation="right"
@@ -1335,6 +1382,7 @@ const AppContent = () => {
                   />
                 </ComposedChart>
               </ResponsiveContainer>
+              )}
             </Box>
           )}
         </Box>
