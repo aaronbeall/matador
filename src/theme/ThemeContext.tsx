@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { ThemeProvider as MuiThemeProvider, createTheme } from '@mui/material';
 
 type ThemeContextType = {
@@ -7,6 +7,7 @@ type ThemeContextType = {
 };
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+const DARK_MODE_STORAGE_KEY = 'matador-dark-mode';
 
 export const useTheme = () => {
   const context = useContext(ThemeContext);
@@ -15,7 +16,13 @@ export const useTheme = () => {
 };
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const stored = localStorage.getItem(DARK_MODE_STORAGE_KEY);
+    return stored === null ? true : stored === 'true';
+  });
+  useEffect(() => {
+    localStorage.setItem(DARK_MODE_STORAGE_KEY, String(isDarkMode));
+  }, [isDarkMode]);
 
   const theme = createTheme({
     palette: {

@@ -118,6 +118,27 @@ const SIDEBAR_MIN_WIDTH = 320;
 const SIDEBAR_MAX_WIDTH = 720;
 const INDICATORS_STORAGE_KEY = 'matador-indicators';
 const PATTERNS_STORAGE_KEY = 'matador-patterns';
+
+// Remaining UI-state persistence keys — same read-once-with-validation,
+// write-on-change pattern as sidebarWidth/indicators/enabledPatterns
+// above, just for the rest of the "remember what I was looking at"
+// surface: symbol, chart interval/range/mode, and sidebar open/tab.
+const SYMBOL_STORAGE_KEY = 'matador-symbol';
+const TIME_INTERVAL_STORAGE_KEY = 'matador-time-interval';
+const TIME_FRAME_STORAGE_KEY = 'matador-time-frame';
+const CHART_MODE_STORAGE_KEY = 'matador-chart-mode';
+const SIDEBAR_OPEN_STORAGE_KEY = 'matador-sidebar-open';
+const SIDEBAR_TAB_STORAGE_KEY = 'matador-sidebar-tab';
+
+const VALID_TIME_INTERVALS: TimeInterval[] = ['1m', '5m', '15m', '1h', '1d', '1w'];
+const VALID_TIME_FRAMES: TimeFrame[] = ['15m', '1h', '3h', '6h', '1d', '1w'];
+const VALID_CHART_MODES: ChartMode[] = ['candles', 'lines', 'both'];
+const VALID_SIDEBAR_TABS: SidebarTab[] = ['watchlist', 'strategy', 'ideas', 'levels', 'alerts', 'activity', 'skills'];
+
+function readStoredString<T extends string>(key: string, valid: T[], fallback: T): T {
+  const stored = localStorage.getItem(key);
+  return valid.includes(stored as T) ? (stored as T) : fallback;
+}
 const STRENGTH_RANK: Record<PatternStrength, number> = { weak: 1, moderate: 2, strong: 3 };
 
 const getTimeFrameMs = (timeFrame: TimeFrame) => 
@@ -152,7 +173,10 @@ const calculateChanges = (candles: Candlestick[], timeFrame: TimeFrame) => {
 };
 
 const AppContent = () => {
-  const [symbol, setSymbol] = useState('QQQ');
+  const [symbol, setSymbol] = useState(() => localStorage.getItem(SYMBOL_STORAGE_KEY) || 'QQQ');
+  useEffect(() => {
+    localStorage.setItem(SYMBOL_STORAGE_KEY, symbol);
+  }, [symbol]);
   const { isDarkMode, toggleTheme } = useTheme();
   const [trade, setTrade] = useState<Trade | null>(null);
   const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
