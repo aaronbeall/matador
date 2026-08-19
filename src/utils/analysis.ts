@@ -1,5 +1,5 @@
 import { Candlestick, TimeInterval } from '../types/Candlestick';
-import { AnalysisSnapshot, TimeframeAnalysis } from '../types/AnalysisSnapshot';
+import { TimeframeAnalysis } from '../types/AnalysisSnapshot';
 import {
   ALL_INDICATORS,
   calculateVWAP,
@@ -10,13 +10,57 @@ import {
 
 const FULL_CONFIDENCE_BARS = 30; // enough for all indicators (MACD needs the most: ~26+9)
 const INTRADAY_TIMEFRAMES: TimeInterval[] = ['1m', '5m', '15m'];
-const ALL_TIMEFRAMES: TimeInterval[] = ['1m', '5m', '15m', '1h', '1d', '1w'];
+export const TIMEFRAME_ORDER: TimeInterval[] = ['1w', '1d', '1h', '15m', '5m', '1m'];
 // VWAP gets attached separately below (day-aware), never through
 // attachIndicators' default cumulative-over-the-whole-array behavior —
 // see attachDailyVWAP.
 const NON_VWAP_INDICATORS = ALL_INDICATORS.filter((i) => i !== 'vwap');
 
-const dayKey = (timestamp: number) => new Date(timestamp).toLocaleDateString('en-CA');
+// --- Period keys ---------------------------------------------------------
+// How the persisted cache is partitioned per timeframe (see
+// vite-plugins/marketData/cache.ts): day for the fast timeframes (so
+// "today" and "yesterday" are each their own small file — what an ORB-style
+// read actually needs), ISO week for 1h, calendar month for 1d, and 1w
+// stays a single unpartitioned file (already only ~100 rows total). All
+// three key functions use local time, matching how the rest of this app
+// already treats "trading day" (toLocaleDateString('en-CA')), not UTC —
+// mixing the two would put a candle in a different partition than its own
+// day-file at certain hours.
+
+export const dayKey = (timestamp: number): string => new Date(timestamp).toLocaleDateString('en-CA');
+
+export const monthKey = (timestamp: number): string => {
+  const d = new Date(timestamp);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+
+// Standard ISO week algorithm (Thursday-of-the-week trick), local time.
+export const isoWeekKey = (timestamp: number): string => {
+  const d = new Date(timestamp);
+  const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  date.setDate(date.getDate() + 4 - (date.getDay() || 7));
+  const yearStart = new Date(date.getFullYear(), 0, 1);
+  const week = Math.ceil(((date.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+  return `${date.getFullYear()}-W${String(week).padStart(2, '0')}`;
+};
+
+// null means "no partitioning" (1w) — a single file, not split by period.
+export function periodKeyFor(interval: TimeInterval, timestamp: number): string | null {
+  switch (interval) {
+    case '1m':
+    case '5m':
+    case '15m':
+      return dayKey(timestamp);
+    case '1h':
+      return isoWeekKey(timestamp);
+    case '1d':
+      return monthKey(timestamp);
+    case '1w':
+      return null;
+  }
+}
+
+// --- Annotation ------------------------------------------------------------
 
 // VWAP conventionally resets every trading session. Annotating it across a
 // multi-day series means computing it per calendar day and stitching the
@@ -44,9 +88,17 @@ function attachDailyVWAP(candles: Candlestick[]): Candlestick[] {
 // patterns — and nothing else. Trend structure, momentum crossovers, level
 // identification, and what a tagged pattern means in context are
 // deliberately NOT computed here; that's the read-time job (find-trades
-// reading data/candles/<symbol>/analysis.md), same way a trader reads a
-// chart rather than trusting a pre-decided verdict.
-function annotateTimeframe(candles: Candlestick[], opts: { intraday: boolean }): Candlestick[] {
+// reading the per-period markdown files cache.ts writes), same way a
+// trader reads a chart rather than trusting a pre-decided verdict.
+//
+// Always runs over the FULL continuous series for a timeframe, never a
+// single partition in isolation — EMA/SMA/RSI/MACD/ATR are causal
+// (SMA200 alone needs 200 prior bars), so annotating one period file's
+// rows on their own would reset the warm-up at every partition boundary.
+// cache.ts is responsible for concatenating all of a timeframe's period
+// files before calling this, and for splitting the result back apart
+// afterward.
+export function annotateTimeframe(candles: Candlestick[], opts: { intraday: boolean }): Candlestick[] {
   let annotated = attachIndicators(candles, NON_VWAP_INDICATORS);
 
   const atrSeries = calculateATR(candles, 14);
@@ -60,38 +112,21 @@ function annotateTimeframe(candles: Candlestick[], opts: { intraday: boolean }):
   return attachCandlePatterns(annotated);
 }
 
-// Builds the full annotated candle history per timeframe — see
-// TimeframeAnalysis. Called from the gap-reconciliation cache
-// (vite-plugins/marketData/cache.ts) whenever any timeframe's candles
-// change; rendered to markdown by renderAnalysisMarkdown below.
-export function computeAnalysisSnapshot(
-  symbol: string,
-  candlesByTimeframe: Partial<Record<TimeInterval, Candlestick[]>>
-): AnalysisSnapshot | null {
-  const timeframes: Partial<Record<TimeInterval, TimeframeAnalysis>> = {};
+export function isIntraday(interval: TimeInterval): boolean {
+  return INTRADAY_TIMEFRAMES.includes(interval);
+}
 
-  for (const tf of ALL_TIMEFRAMES) {
-    const candles = candlesByTimeframe[tf];
-    if (!candles?.length) continue;
-    timeframes[tf] = {
-      barCount: candles.length,
-      dataQuality: candles.length >= FULL_CONFIDENCE_BARS ? 'ok' : 'thin',
-      candles: annotateTimeframe(candles, { intraday: INTRADAY_TIMEFRAMES.includes(tf) }),
-    };
-  }
-
-  if (Object.keys(timeframes).length === 0) return null;
-
+export function toTimeframeAnalysis(candles: Candlestick[]): TimeframeAnalysis {
   return {
-    symbol: symbol.toUpperCase(),
-    computedAt: new Date().toISOString(),
-    timeframes,
+    barCount: candles.length,
+    dataQuality: candles.length >= FULL_CONFIDENCE_BARS ? 'ok' : 'thin',
+    candles,
   };
 }
 
 // --- Markdown rendering -----------------------------------------------
-// Deliberately a separate step from computing the data above — the table
-// format can change without touching the annotation math, and vice versa.
+// Deliberately separate from the annotation math above — the table format
+// can change without touching how indicators are computed, and vice versa.
 
 const round = (n: number | undefined, decimals: number): string =>
   n == null || Number.isNaN(n) ? '' : n.toFixed(decimals);
@@ -104,10 +139,8 @@ function formatTime(timestamp: number, interval: TimeInterval): string {
   return `${date} ${time}`;
 }
 
-const TIMEFRAME_ORDER: TimeInterval[] = ['1w', '1d', '1h', '15m', '5m', '1m'];
-
-function renderTimeframeTable(interval: TimeInterval, block: TimeframeAnalysis): string {
-  const intraday = INTRADAY_TIMEFRAMES.includes(interval);
+export function renderTimeframeTable(interval: TimeInterval, block: TimeframeAnalysis): string {
+  const intraday = isIntraday(interval);
   const headers = ['time', 'open', 'high', 'low', 'close', 'volume', 'ema9', 'ema21', 'sma20', 'sma50', 'sma200'];
   if (intraday) headers.push('vwap');
   headers.push('rsi14', 'macd', 'signal', 'histogram', 'atr14', 'patterns');
@@ -128,7 +161,7 @@ function renderTimeframeTable(interval: TimeInterval, block: TimeframeAnalysis):
   });
 
   const lines = [
-    `### ${interval} (${block.barCount} bars, ${block.dataQuality})`,
+    `### ${interval} (${block.barCount} bars total, ${block.dataQuality})`,
     '',
     `| ${headers.join(' | ')} |`,
     `| ${headers.map(() => '---').join(' | ')} |`,
@@ -137,18 +170,27 @@ function renderTimeframeTable(interval: TimeInterval, block: TimeframeAnalysis):
   return lines.join('\n');
 }
 
-// The Claude-facing artifact: one table per maintained timeframe, ordered
-// top-down (1w -> 1m) to match the reading order find-trades is instructed
-// to use — bias/structure from the slow timeframes first, drilling into
-// faster ones only for symbols worth it. Written to
-// data/candles/<symbol>/analysis.md by cache.ts. A markdown table states
-// each column name once instead of repeating it on every candle the way
-// JSON would, and reads closer to tracing lines/patterns on a chart than a
-// JSON dump does.
-export function renderAnalysisMarkdown(snapshot: AnalysisSnapshot): string {
-  const sections = TIMEFRAME_ORDER
-    .filter((tf) => snapshot.timeframes[tf])
-    .map((tf) => renderTimeframeTable(tf, snapshot.timeframes[tf]!));
+// One period file's worth of one timeframe — e.g. QQQ/1d/2026-08.md,
+// QQQ/1m/2026-08-18.md. `periodLabel` is just the human-readable heading
+// (the period key itself, e.g. "2026-08" or "2026-08-18").
+export function renderPeriodMarkdown(symbol: string, interval: TimeInterval, periodLabel: string, candles: Candlestick[]): string {
+  const block = toTimeframeAnalysis(candles);
+  return [`# ${symbol.toUpperCase()} — ${interval} — ${periodLabel}`, '', renderTimeframeTable(interval, block)].join('\n\n');
+}
 
-  return [`# ${snapshot.symbol} — analysis snapshot`, `Computed: ${snapshot.computedAt}`, '', ...sections].join('\n\n');
+// The small cross-timeframe orientation file (data/candles/<symbol>/latest.md)
+// — the tail of each maintained timeframe, enough to triage but not to
+// found a decision on for anything needing real history. `barCount` on
+// each table still reflects the *full* cached window, not just the tail
+// shown, so it's clear from this file alone how much deeper history is
+// available in the period files.
+export function renderLatestMarkdown(symbol: string, timeframes: Partial<Record<TimeInterval, TimeframeAnalysis>>, tailBars = 10): string {
+  const sections = TIMEFRAME_ORDER
+    .filter((tf) => timeframes[tf])
+    .map((tf) => {
+      const block = timeframes[tf]!;
+      return renderTimeframeTable(tf, { ...block, candles: block.candles.slice(-tailBars) });
+    });
+
+  return [`# ${symbol.toUpperCase()} — latest`, `Computed: ${new Date().toISOString()}`, '', ...sections].join('\n\n');
 }

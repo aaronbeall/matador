@@ -195,7 +195,7 @@ export class MarketDataService {
       if (!oneMin.length) continue;
       try {
         mergeLiveCandles(symbol, '1m', oneMin);
-        recomputeAnalysis(symbol);
+        recomputeAnalysis(symbol, ['1m']);
       } catch (err) {
         console.warn(`[market-data] persist failed for ${symbol}:`, err);
       }

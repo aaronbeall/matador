@@ -27,28 +27,37 @@ On-demand only — there is no scheduled/cron version of this yet.
    `1w` — for every symbol in the active watchlist, gap-checked against
    Alpaca on server startup, every 5 min, and immediately when the
    watchlist changes. **You don't need a symbol to have been opened live
-   in the browser first** — this cache runs regardless. It writes the full
-   candle history for each timeframe's cached window to
-   `data/candles/<SYMBOL>/analysis.md`, one markdown table per timeframe
-   (ordered `1w`/`1d`/`1h`/`15m`/`5m`/`1m`), every row a candle with
-   precomputed columns: `open`/`high`/`low`/`close`/`volume`,
-   `ema9`/`ema21`/`sma20`/`sma50`/`sma200`, `rsi14`, `macd`/`signal`/
-   `histogram`, `atr14`, `vwap` (intraday tables only — `1m`/`5m`/`15m`,
-   resetting each trading day; not a `1h`/`1d`/`1w` concept), and
-   `patterns` (any candlestick pattern detected on that specific row).
+   in the browser first** — this cache runs regardless.
 
-   Read it directly, or run the convenience wrapper, which adds a
-   staleness check and can filter to just the timeframes you need:
+   The cache itself is the source of the annotation — every persisted
+   candle already carries `open`/`high`/`low`/`close`/`volume`,
+   `ema9`/`ema21`/`sma20`/`sma50`/`sma200`, `rsi14`, `macd`/`signal`/
+   `histogram`, `atr14`, `vwap` (intraday only — `1m`/`5m`/`15m`, resetting
+   each trading day) and `patterns` (any candlestick pattern detected on
+   that specific candle). It's partitioned so you only ever have to load
+   what a given read actually needs, not one giant file:
    ```
-   node .claude/skills/find-trades/scan.mjs <SYMBOL>
-   node .claude/skills/find-trades/scan.mjs <SYMBOL> --timeframe 1d,1w
+   data/candles/<SYMBOL>/1m/<YYYY-MM-DD>.md    one file per trading day
+   data/candles/<SYMBOL>/5m/<YYYY-MM-DD>.md    one file per trading day
+   data/candles/<SYMBOL>/15m/<YYYY-MM-DD>.md   one file per trading day
+   data/candles/<SYMBOL>/1h/<YYYY-Www>.md      one file per ISO week (e.g. 2026-W33)
+   data/candles/<SYMBOL>/1d/<YYYY-MM>.md       one file per calendar month
+   data/candles/<SYMBOL>/1w.md                 single file (already only ~100 rows total)
+   data/candles/<SYMBOL>/latest.md             tail of every timeframe, for quick orientation
    ```
+   Two-stage read:
+   - **Orient with `latest.md`** — `node .claude/skills/find-trades/scan.mjs <SYMBOL>` (adds a staleness check on top of a plain read). This is enough to triage a symbol — get a read on current levels/momentum across all six timeframes at a glance — but it's only the last ~10 rows of each; it's not enough to found a real decision on.
+   - **Pull exactly the history the setup actually needs.** `ls` the relevant subdirectory, `Read` whichever period file(s) matter — this is a deliberate choice per symbol/strategy, not "always load everything":
+     - An ORB read wants today's (and maybe yesterday's, for a gap reference) `1m`/`5m` day file — nothing else.
+     - A multi-week swing read wants a handful of `1d` month files, maybe a couple of `1h` week files — not the full multi-year history.
+     - A quick momentum check might genuinely need nothing beyond `latest.md`.
+
    Every column value and every pattern tag is precomputed, deterministic,
    and guaranteed consistent with what's on the chart — **never recompute
    any of it yourself from raw candles**, that reintroduces exactly the
    two-implementations-drift risk this design removed. What's genuinely
    **not** precomputed, and *is* your job — this is the actual point of
-   handing you the full tables instead of a summary:
+   reading real tables instead of a summary:
    - **Trend structure** — read the sequence of highs/lows down the table
      yourself (higher-highs/higher-lows = uptrend, the reverse = downtrend,
      neither = range/consolidation). There's no stored "trend" field.
@@ -57,35 +66,33 @@ On-demand only — there is no scheduled/cron version of this yet.
      crossover 3 rows ago that's held is a very different signal than one
      that just happened or one that reversed immediately.
    - **Levels** — identify support/resistance from *clusters* of highs or
-     lows that got tested more than once across the visible rows, not just
-     the single highest/lowest value in the table. A level three separate
-     candles wicked into and rejected from is real structure; a single
-     extreme print usually isn't.
+     lows that got tested more than once, not just the single highest/
+     lowest value in whatever you pulled. A level three separate candles
+     wicked into and rejected from is real structure; a single extreme
+     print usually isn't.
    - **Pattern context** — a `patterns` tag (doji, engulfing, hammer,
      morning/evening star, shooting star) means something in light of
      *where it sits* — at a level you already identified, after a
-     multi-row pullback, at a EMA cross — not on its own. Never treat a
+     multi-row pullback, at an EMA cross — not on its own. Never treat a
      tag alone as a trade trigger.
-   - **Cross-timeframe synthesis — the actual reason all six tables are
-     given together, not one at a time.** A level or trend that agrees
-     across `1h` and `1d` (or further, `1w`) is materially stronger than
-     one that only shows up on a single timeframe. Read top-down: `1w`/`1d`
-     first for bias and the major levels, `1h` for the swing structure
-     actually in play right now, then `15m`/`5m`/`1m` only for symbols that
-     already look worth a closer look (`scan.mjs --timeframe 1d,1w` first,
-     drill in from there) — both because that's cheaper (full history
-     across all six is a lot of rows to read for every watchlist symbol)
-     and because it's the same order a real multi-timeframe trader reads
-     in.
+   - **Cross-timeframe synthesis — the actual reason to pull more than one
+     timeframe's history, not just orient off `latest.md`.** A level or
+     trend that agrees across `1h` and `1d` (or further, `1w`) is
+     materially stronger than one that only shows up on a single
+     timeframe. Read top-down: bias and major levels from the slow
+     timeframes first, only pulling `15m`/`5m`/`1m` history for symbols
+     that already look worth a closer look — both cheaper (you're not
+     pulling months of history for every watchlist symbol on every run)
+     and the same order a real multi-timeframe trader reads in.
 
-   Each timeframe block carries `barCount`/`dataQuality` (`'ok'` once it
-   has ~30+ bars, else `'thin'`) in its table header — judge each
-   timeframe on its own quality rather than the symbol as a whole; `1d`/
-   `1w` can be trustworthy even while a newly-added symbol's `15m` is still
-   thin. If the file is missing entirely, or `scan.mjs` flags it stale
-   (computed >~5 min ago), say so and treat it as low/no confidence —
-   don't proceed as if it were fresh, and don't fabricate a result to fill
-   the gap.
+   Each period file's table header carries `barCount`/`dataQuality` (`'ok'`
+   once that timeframe has ~30+ bars total, else `'thin'`) — judge each
+   timeframe on its own quality rather than the symbol as a whole; `1d`/`1w`
+   can be trustworthy even while a newly-added symbol's `15m` is still
+   thin. If `latest.md` is missing entirely, or `scan.mjs` flags it stale
+   (computed >~5 min ago), say so and treat it as low/no confidence — don't
+   proceed as if it were fresh, and don't fabricate a result to fill the
+   gap.
 
 3. **Evaluate against strategy.md, per symbol.** Apply the rules exactly
    as written in `data/strategy.md`, not from memory — it may have been
@@ -143,12 +150,52 @@ On-demand only — there is no scheduled/cron version of this yet.
    before adding the fresh set for that symbol, rather than letting stale
    ones accumulate. See `src/types/Level.ts` for the shape.
 
-6. **Write `data/alerts.json` for anything notable.** At minimum: one
-   `action` alert per new trade idea created (step 4), and a `watch`
-   alert when price is within roughly 0.3% of an active level without
-   yet qualifying as a full setup. Keep the `message` concrete — cite
-   the actual price and level, not "approaching a level." See
-   `src/types/Alert.ts`.
+6. **Write `data/alerts.json` — as conditions, not facts.** An alert is
+   either something already true right now, or something to watch for:
+   - **Already true right now** (e.g. a new trade idea just qualified in
+     step 4): write it with `status: 'triggered'`, `triggeredAt: now`.
+   - **Not true yet, but would matter if it became true** (e.g. price
+     approaching a level, a setup that needs one more confirmation): write
+     it with `status: 'pending'` and a concrete `AlertCondition` (see
+     `src/types/Alert.ts`) — `price-crosses`, `indicator-crosses`,
+     `macd-crosses-signal`, or `indicator-threshold`. **You don't monitor
+     this yourself** — a background engine (`vite-plugins/marketData/
+     alertsEngine.ts`) checks every pending condition against fresh data on
+     the same cadence `analysis.md` itself updates on (live ~10s while a
+     symbol's on screen, every 5 min otherwise) and flips it to `triggered`
+     the moment it's actually met. Your job is picking the one concrete,
+     checkable condition that actually represents the setup — not writing
+     a vague "watch this."
+   - Every alert needs: `headline` (succinct, this is what shows in the
+     desktop notification when it triggers — "QQQ broke above $730.50
+     resistance", not a restated condition), `rationale` (why it matters —
+     this is where multi-timeframe confluence reasoning goes), `actionGuidance`
+     (what to actually do or look for next), `severity` (`watch`/`action`),
+     and a required `expiresAt` — inherit the related idea's `expiresAt` if
+     there is one, otherwise set a deliberate one (don't leave a pending
+     condition to watch forever; the engine auto-expires anything past its
+     `expiresAt` on its own even if you never rescan).
+   - **Time-box a condition with `activeFrom` when the signal only means
+     something in a specific window** — not evaluated before `activeFrom`
+     (defaults to right away if omitted), still auto-expires at
+     `expiresAt` either way. The motivating case is ORB: the opening range
+     itself isn't final until the first ~30 minutes of the session have
+     closed, and a break of that level hours later isn't really "the ORB
+     signal" anymore, just an unrelated late-day cross — so set
+     `activeFrom` to when the opening range closes and `expiresAt` to how
+     long after that a break still counts (e.g. through the next hour, not
+     the rest of the day). Any signal with a natural window works the same
+     way — set both ends deliberately rather than defaulting to "watch
+     forever starting now."
+   - **Supersede stale ones, don't just add more.** Before writing new
+     alerts for a symbol, check its existing `pending` entries: if a setup
+     is no longer valid (level broken the wrong way, the related idea
+     itself got invalidated or expired), set that alert's `status:
+     'superseded'` rather than leaving it hanging — an open desktop
+     notification tied to a triggered-then-superseded alert gets actively
+     closed on the frontend when this happens, and a lingering pending one
+     just keeps getting checked for nothing. This is what keeps repeated
+     scans from accumulating near-duplicate alerts for the same condition.
 
 7. **Append to `data/analysis-log.json`.** One entry per symbol scanned
    this run, always — including "no data yet", "insufficient history",
@@ -174,15 +221,16 @@ On-demand only — there is no scheduled/cron version of this yet.
   first**. If a symbol was *just* added to the watchlist, give it a
   moment (the cache reconciles new symbols immediately on watchlist
   change, but the Alpaca fetch itself takes a few seconds per timeframe).
-- Candle storage is one bounded file per timeframe
-  (`data/candles/<SYMBOL>/<1m|5m|15m|1h|1d|1w>.json`), each capped to
-  that timeframe's own lookback window (2 days for `1m` up to ~2 years
-  for `1w` — see `vite-plugins/marketData/timeframes.ts` for the exact
-  table and reasoning) — no day-sharding or derived rollups anymore,
-  since every timeframe is fetched natively from Alpaca and reconciled
-  against it directly. These `.json` files stay pure OHLCV, on purpose —
-  `analysis.md` (what you actually read) is a separate, generated
-  artifact; the raw cache is never annotated with indicators or patterns.
+- Candle storage is partitioned per timeframe — day files for `1m`/`5m`/
+  `15m`, ISO-week files for `1h`, month files for `1d`, a single file for
+  `1w` — each capped to that timeframe's own lookback window (2 days for
+  `1m` up to ~2 years for `1w` — see `vite-plugins/marketData/
+  timeframes.ts` for the exact table and reasoning; old-enough period
+  files just get deleted as that window rolls forward). The `.json` cache
+  IS the annotated data — indicators and pattern tags are computed once
+  server-side and persisted alongside the OHLCV, not recomputed on every
+  read. Each `.md` is a direct markdown mirror of its `.json` sibling —
+  that's what you actually read; see step 2 above for the exact layout.
 - Never fabricate candle data, levels, or alerts to make a panel look
   populated. An honest "no data" or "no qualifying setup" is the correct
   output when that's what the numbers show — and now that outcome is

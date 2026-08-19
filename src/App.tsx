@@ -422,32 +422,50 @@ const AppContent = () => {
     });
   }, []);
 
-  // Real desktop notifications for new alerts (the Web Notifications API
-  // — an actual OS-level popup, not just an in-app badge). This is the
-  // "system Claude can write to" half of alerts: the find-trades skill
-  // never needs to know notifications exist, it just writes
-  // data/alerts.json as usual — this effect turns any new, non-'info'
-  // entry into a real notification automatically.
+  // Real desktop notifications (the Web Notifications API — an actual
+  // OS-level popup, not just an in-app badge). Fires only when an alert
+  // actually *triggers* (status transitions to 'triggered'), not when
+  // Claude first writes it as a pending condition to watch — see
+  // alertsEngine.ts for what flips that status. The find-trades skill
+  // still never needs to know notifications exist, it just writes
+  // data/alerts.json as usual.
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     () => typeof Notification !== 'undefined' && Notification.permission === 'granted' && localStorage.getItem('matador-notifications-enabled') === 'true'
   );
-  const seenAlertIds = useRef<Set<string> | null>(null);
+  const notifiedAlertIds = useRef<Set<string> | null>(null);
+  // Tracks currently-open OS notifications by alert id so a stale one can
+  // be actively closed (not just prevented from popping again) once its
+  // alert is superseded/expired/acknowledged/removed — `tag` alone only
+  // stops duplicate popups, it doesn't dismiss one already on screen.
+  const openNotifications = useRef<Map<string, Notification>>(new Map());
 
   useEffect(() => {
-    // First run: remember every alert already on disk without notifying
-    // for them — only genuinely new arrivals after this point should pop.
-    if (seenAlertIds.current === null) {
-      seenAlertIds.current = new Set(alerts.map((a) => a.id));
+    for (const [id, notification] of openNotifications.current) {
+      const alert = alerts.find((a) => a.id === id);
+      const stale = !alert || alert.status === 'superseded' || alert.status === 'expired' || alert.acknowledged;
+      if (stale) {
+        notification.close();
+        openNotifications.current.delete(id);
+      }
+    }
+
+    // First run: remember every alert already triggered on disk without
+    // notifying for them — only genuinely new triggers after this point
+    // should pop.
+    if (notifiedAlertIds.current === null) {
+      notifiedAlertIds.current = new Set(alerts.filter((a) => a.status === 'triggered').map((a) => a.id));
       return;
     }
-    for (const alert of alerts) {
-      if (seenAlertIds.current.has(alert.id)) continue;
-      seenAlertIds.current.add(alert.id);
-      if (alert.severity === 'info') continue; // skip low-signal noise
-      if (!notificationsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') continue;
 
-      const notification = new Notification(`Matador · ${alert.symbol} (${alert.severity})`, {
-        body: alert.message,
+    if (!notificationsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+
+    for (const alert of alerts) {
+      if (alert.status !== 'triggered' || alert.acknowledged) continue;
+      if (notifiedAlertIds.current.has(alert.id)) continue;
+      notifiedAlertIds.current.add(alert.id);
+
+      const notification = new Notification(`Matador · ${alert.symbol}`, {
+        body: alert.headline,
         tag: alert.id,
       });
       notification.onclick = () => {
@@ -455,6 +473,7 @@ const AppContent = () => {
         setSidebarOpen(true);
         setSidebarTab('alerts');
       };
+      openNotifications.current.set(alert.id, notification);
     }
   }, [alerts, notificationsEnabled]);
 

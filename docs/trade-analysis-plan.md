@@ -35,24 +35,34 @@ trading data or strategy specifics get committed):
 - `levels.json` — support/resistance levels to watch per symbol, written
   independent of whether a trade idea qualified. Rendered as reference
   lines on the chart for the active symbol, plus its own panel.
-- `alerts.json` — notable events (new idea, price approaching a level),
-  severity-tagged, acknowledgeable from the UI.
+- `alerts.json` — either something already true (a new idea just
+  qualified) or a concrete, checkable condition to watch for (a level
+  cross, an indicator crossover/threshold). A background engine
+  (`vite-plugins/marketData/alertsEngine.ts`) evaluates pending conditions
+  against fresh data and flips them to triggered — that's what actually
+  fires a desktop notification, not the alert's creation. Severity-tagged,
+  acknowledgeable from the UI.
 - `analysis-log.json` — a run log of what the skill actually did per
   symbol per invocation, including "no data" / "no qualifying setup" —
   so the UI shows the system's reasoning, not just its hits.
-- `candles/<symbol>/<interval>.json` — one file per maintained timeframe
-  (`1m`/`5m`/`15m`/`1h`/`1d`/`1w`), raw OHLCV bars fetched natively from
-  Alpaca and kept gap-free by the background reconciliation cache (see
-  "Live market data" below), each bounded to that timeframe's own
-  lookback window rather than one ever-growing file.
-- `candles/<symbol>/analysis.md` — the Claude-facing view: one markdown
-  table per timeframe (`1w`…`1m`), every cached candle as a row, annotated
-  with precomputed EMA/SMA/RSI/MACD/ATR/VWAP(intraday-only)/candlestick
-  patterns per row, written by Node. Deliberately *not* a summary —
-  `find-trades` reads the full annotated history and does its own
-  trend/momentum/level/cross-timeframe reasoning over it, the way it would
-  read a chart screenshot; Node precomputes only what's deterministic
-  (the indicator math, the pattern detection), never the judgment.
+- `candles/<symbol>/<interval>/<period>.json` (+ `.md`) — the indicator-
+  annotated cache, partitioned by period so a read only has to load what
+  it actually needs: day files for `1m`/`5m`/`15m`, ISO-week files for
+  `1h`, month files for `1d`. `1w` has no partition (`candles/<symbol>/
+  1w.json`/`.md`, ~100 rows total). Every `.json` carries OHLCV plus
+  precomputed EMA/SMA/RSI/MACD/ATR/VWAP(intraday-only)/candlestick
+  patterns, fetched natively from Alpaca and kept gap-free by the
+  background reconciliation cache (see "Live market data" below), each
+  bounded to that timeframe's own lookback window (old period files just
+  get deleted as the window rolls forward). Each `.md` is a direct
+  markdown mirror of its `.json` sibling — deliberately *not* a summary —
+  `find-trades` reads it and does its own trend/momentum/level/
+  cross-timeframe reasoning over the real candles, the way it would read
+  a chart screenshot; Node precomputes only what's deterministic (the
+  indicator math, the pattern detection), never the judgment.
+- `candles/<symbol>/latest.md` — a small cross-timeframe orientation file
+  (tail of each maintained timeframe), for triage before deciding which
+  deeper period files, if any, a particular read needs.
 
 The filesystem is the single source of truth. The Claude skill writes to
 it directly (filesystem access when chatting in-repo). The frontend
@@ -121,11 +131,13 @@ Node now owns this end to end (`vite-plugins/marketData/`):
   pushing candles to the browser — the single place this math runs. Only
   1m is fed by the live trade stream; `5m`/`15m`/`1h`/`1d`/`1w` come from
   the native Alpaca fetch above, not derived from 1m.
-- **Persists** live 1m candles + re-renders `analysis.md`
-  (`src/utils/analysis.ts`'s `computeAnalysisSnapshot` +
-  `renderAnalysisMarkdown`) on a 10s timer while a symbol has an active
-  browser subscriber; the background cache above covers every other
-  watchlist symbol on its own 5-min cycle.
+- **Persists** live 1m candles + re-annotates that timeframe + re-renders
+  `latest.md` (`src/utils/analysis.ts`'s `annotateTimeframe` +
+  `renderLatestMarkdown`, via `cache.ts`'s `recomputeAnalysis`) on a 10s
+  timer while a symbol has an active browser subscriber; the background
+  cache above covers every other watchlist symbol, and every other
+  timeframe, on its own 5-min cycle — only whichever timeframe(s) actually
+  changed get re-annotated and re-split into period files each cycle.
 - **Serves the browser** over a local WebSocket at `/ws/market`, attached
   to the same underlying HTTP server Vite already runs (`{ noServer: true }`
   plus a manual `upgrade` listener scoped to that path — attaching via

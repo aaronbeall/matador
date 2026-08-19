@@ -2,22 +2,38 @@ import fs from 'fs';
 import path from 'path';
 import type { Candlestick, TimeInterval } from '../../src/types/Candlestick';
 import type { Watchlist } from '../../src/types/Watchlist';
-import { computeAnalysisSnapshot, renderAnalysisMarkdown } from '../../src/utils/analysis';
+import type { AnalysisSnapshot, TimeframeAnalysis } from '../../src/types/AnalysisSnapshot';
+import {
+  annotateTimeframe,
+  periodKeyFor,
+  renderPeriodMarkdown,
+  renderLatestMarkdown,
+  toTimeframeAnalysis,
+} from '../../src/utils/analysis';
 import { fetchBars, type AlpacaBar } from './alpaca';
 import { TIMEFRAMES, type TimeframeConfig } from './timeframes';
+import { evaluateAlertsForSymbol } from './alertsEngine';
 
-// The gap-free multi-timeframe cache: one bounded, natively-fetched
-// Alpaca bar series per (symbol, timeframe), plus the fully annotated
-// multi-timeframe view rendered from them. Maintained proactively for the
+// The gap-free, indicator-annotated cache. Maintained proactively for the
 // whole active watchlist (see reconcileWatchlist), not just whatever
-// symbol happens to be open live in the browser — that was the actual gap
-// this replaces candleStorage.ts to close.
+// symbol happens to be open live in the browser.
 //
-// Layout: data/candles/<SYMBOL>/<interval>.json (raw OHLCV only, bounded
-// to that timeframe's lookback — never gets indicator/pattern fields, so
-// the gap-reconciliation diff below stays a plain bar-for-bar comparison),
-// data/candles/<SYMBOL>/analysis.md (the annotated, multi-timeframe
-// markdown find-trades reads — see src/utils/analysis.ts).
+// Layout — partitioned per timeframe so a read only has to pull what it
+// actually needs (an ORB read wants today's 1m; a structure read wants
+// months of 1d — not the same file):
+//   data/candles/<SYMBOL>/1m/<YYYY-MM-DD>.json + .md    one file per day
+//   data/candles/<SYMBOL>/5m/<YYYY-MM-DD>.json + .md    one file per day
+//   data/candles/<SYMBOL>/15m/<YYYY-MM-DD>.json + .md   one file per day
+//   data/candles/<SYMBOL>/1h/<YYYY-Www>.json + .md      one file per ISO week
+//   data/candles/<SYMBOL>/1d/<YYYY-MM>.json + .md       one file per month
+//   data/candles/<SYMBOL>/1w.json + 1w.md               single file, no partition
+//   data/candles/<SYMBOL>/latest.md                     cross-timeframe quick snapshot
+//
+// Every .json period file carries full annotation — OHLCV plus every
+// deterministic indicator (see src/utils/analysis.ts's annotateTimeframe)
+// — it IS the cache; there's no separate raw-only copy. Each .md is a
+// direct, concise markdown mirror of its .json sibling, which is what
+// find-trades actually reads.
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -28,12 +44,21 @@ function symbolDir(symbol: string) {
   return path.join(CANDLES_DIR, symbol.toUpperCase());
 }
 
-function barsFilePath(symbol: string, interval: TimeInterval) {
-  return path.join(symbolDir(symbol), `${interval}.json`);
+// `key: null` means "unpartitioned" — only valid for '1w', a single file.
+function periodJsonPath(symbol: string, interval: TimeInterval, key: string | null) {
+  return key === null
+    ? path.join(symbolDir(symbol), `${interval}.json`)
+    : path.join(symbolDir(symbol), interval, `${key}.json`);
 }
 
-function analysisFilePath(symbol: string) {
-  return path.join(symbolDir(symbol), 'analysis.md');
+function periodMdPath(symbol: string, interval: TimeInterval, key: string | null) {
+  return key === null
+    ? path.join(symbolDir(symbol), `${interval}.md`)
+    : path.join(symbolDir(symbol), interval, `${key}.md`);
+}
+
+function latestMdPath(symbol: string) {
+  return path.join(symbolDir(symbol), 'latest.md');
 }
 
 function readJson<T>(filePath: string, fallback: T): T {
@@ -50,24 +75,48 @@ function writeJson(filePath: string, data: unknown) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
 }
 
-export function getCachedBars(symbol: string, interval: TimeInterval): Candlestick[] {
-  return readJson<AlpacaBar[]>(barsFilePath(symbol, interval), []);
-}
-
-export function getAnalysisMarkdown(symbol: string): string | null {
-  const filePath = analysisFilePath(symbol);
-  return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
-}
-
-function writeAnalysisMarkdown(symbol: string, markdown: string) {
-  const filePath = analysisFilePath(symbol);
+function writeText(filePath: string, text: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, markdown);
+  fs.writeFileSync(filePath, text);
 }
 
-function pruneToLookback(bars: AlpacaBar[], lookbackDays: number): AlpacaBar[] {
-  const cutoff = Date.now() - lookbackDays * ONE_DAY_MS;
-  return bars.filter((b) => b.timestamp >= cutoff).sort((a, b) => a.timestamp - b.timestamp);
+function listPeriodKeys(symbol: string, interval: TimeInterval): (string | null)[] {
+  if (interval === '1w') return fs.existsSync(periodJsonPath(symbol, interval, null)) ? [null] : [];
+  const dir = path.join(symbolDir(symbol), interval);
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => f.slice(0, -'.json'.length));
+}
+
+function readPeriodFile(symbol: string, interval: TimeInterval, key: string | null): Candlestick[] {
+  return readJson<AlpacaBar[]>(periodJsonPath(symbol, interval, key), []);
+}
+
+function writePeriodFile(symbol: string, interval: TimeInterval, key: string | null, candles: Candlestick[]) {
+  writeJson(periodJsonPath(symbol, interval, key), candles);
+}
+
+function deletePeriodFile(symbol: string, interval: TimeInterval, key: string | null) {
+  for (const p of [periodJsonPath(symbol, interval, key), periodMdPath(symbol, interval, key)]) {
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  }
+}
+
+// Whatever's currently cached for a timeframe, across all its period
+// files, concatenated and sorted. Used by service.ts to seed the live
+// CandleStore, by the annotation pass to reconstruct the full continuous
+// series, and by recomputeAnalysis to assemble the alerts-engine snapshot.
+export function getCachedBars(symbol: string, interval: TimeInterval): Candlestick[] {
+  const all: Candlestick[] = [];
+  for (const key of listPeriodKeys(symbol, interval)) all.push(...readPeriodFile(symbol, interval, key));
+  return all.sort((a, b) => a.timestamp - b.timestamp);
+}
+
+export function getLatestMarkdown(symbol: string): string | null {
+  const filePath = latestMdPath(symbol);
+  return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
 }
 
 // Live WS trade path only ever writes 1m (see service.ts persistAll) —
@@ -75,11 +124,39 @@ function pruneToLookback(bars: AlpacaBar[], lookbackDays: number): AlpacaBar[] {
 // below is guarded to never stomp the currently-forming bucket, so the
 // two never race for the same timestamp.
 export function mergeLiveCandles(symbol: string, interval: TimeInterval, incoming: Candlestick[]) {
-  const config = TIMEFRAMES.find((t) => t.interval === interval)!;
-  const existing = getCachedBars(symbol, interval);
-  const merged = new Map(existing.map((c) => [c.timestamp, c]));
-  for (const c of incoming) merged.set(c.timestamp, c);
-  writeJson(barsFilePath(symbol, interval), pruneToLookback(Array.from(merged.values()), config.lookbackDays));
+  const groups = new Map<string | null, Candlestick[]>();
+  for (const c of incoming) {
+    const key = periodKeyFor(interval, c.timestamp);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(c);
+  }
+  for (const [key, group] of groups) {
+    const existing = readPeriodFile(symbol, interval, key);
+    const merged = new Map(existing.map((c) => [c.timestamp, c]));
+    for (const c of group) merged.set(c.timestamp, c);
+    writePeriodFile(symbol, interval, key, Array.from(merged.values()).sort((a, b) => a.timestamp - b.timestamp));
+  }
+}
+
+// Deletes whole period files that fall entirely outside a timeframe's
+// lookback window (replaces the old in-array timestamp-filter pruning,
+// since storage is now partitioned by period instead of one flat array).
+// 1w has no partitioning, so it prunes rows within its single file instead.
+function pruneOldPeriods(symbol: string, tf: TimeframeConfig) {
+  if (tf.interval === '1w') {
+    const cutoff = Date.now() - tf.lookbackDays * ONE_DAY_MS;
+    const existing = readPeriodFile(symbol, '1w', null);
+    const pruned = existing.filter((c) => c.timestamp >= cutoff);
+    if (pruned.length !== existing.length) writePeriodFile(symbol, '1w', null, pruned);
+    return;
+  }
+  // Period key strings (YYYY-MM-DD / YYYY-Www / YYYY-MM) sort
+  // lexicographically the same as chronologically, so a plain string
+  // comparison against the cutoff's own key is enough.
+  const cutoffKey = periodKeyFor(tf.interval, Date.now() - tf.lookbackDays * ONE_DAY_MS)!;
+  for (const key of listPeriodKeys(symbol, tf.interval)) {
+    if (key !== null && key < cutoffKey) deletePeriodFile(symbol, tf.interval, key);
+  }
 }
 
 // Alpaca is treated as the gap oracle: rather than compute "expected"
@@ -104,42 +181,95 @@ export async function reconcile(
   const guardCurrentBucket = tf.interval === '1m';
   const currentBucketStart = Math.floor(now / tf.intervalMs) * tf.intervalMs;
 
-  const existing = getCachedBars(symbol, tf.interval);
-  const merged = new Map(existing.map((c) => [c.timestamp, c]));
-  let changed = false;
-
+  const groups = new Map<string | null, AlpacaBar[]>();
   for (const bar of fetched) {
     if (guardCurrentBucket && bar.timestamp >= currentBucketStart) continue;
-    const prev = merged.get(bar.timestamp);
-    if (!prev || prev.close !== bar.close || prev.high !== bar.high || prev.low !== bar.low || prev.volume !== bar.volume) {
-      changed = true;
-    }
-    merged.set(bar.timestamp, bar);
+    const key = periodKeyFor(tf.interval, bar.timestamp);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(bar);
   }
 
-  if (changed) {
-    writeJson(barsFilePath(symbol, tf.interval), pruneToLookback(Array.from(merged.values()), tf.lookbackDays));
+  let anyChanged = false;
+  for (const [key, bars] of groups) {
+    const existing = readPeriodFile(symbol, tf.interval, key);
+    const merged = new Map(existing.map((c) => [c.timestamp, c]));
+    let groupChanged = false;
+    for (const bar of bars) {
+      const prev = merged.get(bar.timestamp);
+      if (!prev || prev.close !== bar.close || prev.high !== bar.high || prev.low !== bar.low || prev.volume !== bar.volume) {
+        groupChanged = true;
+      }
+      merged.set(bar.timestamp, bar);
+    }
+    if (groupChanged) {
+      writePeriodFile(symbol, tf.interval, key, Array.from(merged.values()).sort((a, b) => a.timestamp - b.timestamp));
+      anyChanged = true;
+    }
   }
-  return changed;
+
+  pruneOldPeriods(symbol, tf);
+  return anyChanged;
 }
 
-// Shared by the background reconcile below (after a gap-fill actually
-// changes something) and by the live WS persist path in service.ts
-// (every ~10s while a symbol has an active browser subscriber) — same
-// cadence find-trades' staleness check already assumed pre-migration, now
-// just reading whichever timeframes are cached rather than only 1m.
-export function recomputeAnalysis(symbol: string): void {
-  const byTimeframe = Object.fromEntries(
-    TIMEFRAMES.map((tf) => [tf.interval, getCachedBars(symbol, tf.interval)])
-  ) as Record<TimeInterval, Candlestick[]>;
+// Reconstructs the full continuous series for a timeframe (across all its
+// period files), re-annotates it in one pass (indicators are causal —
+// this can't be done per-period in isolation, see analysis.ts), and splits
+// the result back into per-period .json + .md files.
+function annotateAndPersist(symbol: string, tf: TimeframeConfig): Candlestick[] {
+  const raw = getCachedBars(symbol, tf.interval);
+  if (!raw.length) return [];
+  const annotated = annotateTimeframe(raw, { intraday: tf.intraday });
 
-  const snapshot = computeAnalysisSnapshot(symbol, byTimeframe);
-  if (snapshot) writeAnalysisMarkdown(symbol, renderAnalysisMarkdown(snapshot));
+  if (tf.interval === '1w') {
+    writePeriodFile(symbol, '1w', null, annotated);
+    writeText(periodMdPath(symbol, '1w', null), renderPeriodMarkdown(symbol, '1w', 'all', annotated));
+    return annotated;
+  }
+
+  const groups = new Map<string, Candlestick[]>();
+  for (const c of annotated) {
+    const key = periodKeyFor(tf.interval, c.timestamp)!;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(c);
+  }
+  for (const [key, candles] of groups) {
+    writePeriodFile(symbol, tf.interval, key, candles);
+    writeText(periodMdPath(symbol, tf.interval, key), renderPeriodMarkdown(symbol, tf.interval, key, candles));
+  }
+  return annotated;
+}
+
+// Re-annotates only the timeframe(s) that actually changed (cheap — most
+// reconcile cycles only touch 1m), then assembles the full six-timeframe
+// snapshot from whatever's now persisted (fresh for the changed ones,
+// already-annotated-from-a-prior-cycle for the rest) to refresh
+// latest.md and feed the alerts engine — same shape it already consumed,
+// just sourced from the partitioned cache instead of one combined file.
+export function recomputeAnalysis(symbol: string, changedIntervals: TimeInterval[]): void {
+  for (const interval of changedIntervals) {
+    const tf = TIMEFRAMES.find((t) => t.interval === interval)!;
+    annotateAndPersist(symbol, tf);
+  }
+
+  const timeframes: Partial<Record<TimeInterval, TimeframeAnalysis>> = {};
+  for (const tf of TIMEFRAMES) {
+    const candles = getCachedBars(symbol, tf.interval);
+    if (candles.length) timeframes[tf.interval] = toTimeframeAnalysis(candles);
+  }
+  if (Object.keys(timeframes).length === 0) return;
+
+  writeText(latestMdPath(symbol), renderLatestMarkdown(symbol, timeframes));
+
+  const snapshot: AnalysisSnapshot = { symbol: symbol.toUpperCase(), computedAt: new Date().toISOString(), timeframes };
+  evaluateAlertsForSymbol(symbol, snapshot);
 }
 
 export async function reconcileSymbol(keyId: string, secret: string, symbol: string): Promise<void> {
-  const results = await Promise.all(TIMEFRAMES.map((tf) => reconcile(keyId, secret, symbol, tf)));
-  if (results.some(Boolean)) recomputeAnalysis(symbol);
+  const results = await Promise.all(
+    TIMEFRAMES.map(async (tf) => ({ interval: tf.interval, changed: await reconcile(keyId, secret, symbol, tf) }))
+  );
+  const changed = results.filter((r) => r.changed).map((r) => r.interval);
+  if (changed.length) recomputeAnalysis(symbol, changed);
 }
 
 export function readWatchlistSymbols(): string[] {
