@@ -2,14 +2,22 @@ import { Candlestick, TimeInterval } from '../types/Candlestick';
 import { Trade } from '../types/Trade';
 
 const BASE_INTERVAL_MS = 60000; // 1m — the finest granularity we track
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+// This store now only ever needs to answer "what does the *current,
+// still-forming* bucket look like" for whatever interval a client is
+// viewing (up to 1h) — real history comes from the persisted cache
+// instead (vite-plugins/marketData/service.ts's buildCandlesFor). So it
+// only needs to retain enough base 1m candles to cover the slowest
+// supported interval's current bucket, with headroom; it used to retain
+// 24h under the assumption it was also serving history, which was the
+// actual cause of the live chart never showing more than ~a day
+// regardless of Display Range.
+const RETENTION_MS = 2 * 60 * 60 * 1000;
 
 export class CandleStore {
   // Base candles at 1m resolution, keyed by bucket timestamp. Coarser
   // intervals (5m/15m/1h) are derived from these by aggregation, so a
-  // candle's real open/high/low/close is only ever computed once, from
-  // either live trades or seeded real data — never collapsed to a
-  // single price point. See seedCandles() below.
+  // candle's real open/high/low/close is only ever computed once, never
+  // collapsed to a single price point.
   private baseCandles: Map<number, Candlestick> = new Map();
 
   // 1d/1w are never actually requested here — this store only ever
@@ -49,25 +57,6 @@ export class CandleStore {
     this.pruneOld();
   }
 
-  // Seed with real, already-aggregated 1m candles — e.g. rehydrated from
-  // data/candles/<symbol>.json (persisted from a prior live session) or
-  // converted from a REST candle response. Preserves the real open/high/
-  // low/close instead of reconstructing them from a single synthetic
-  // trade, which is what was collapsing precision before.
-  //
-  // Only fills buckets we don't already have live data for — seeding
-  // happens once at connect time, so this never needs to merge/overwrite
-  // live trades that arrived first.
-  seedCandles(candles: Candlestick[]) {
-    for (const candle of candles) {
-      const bucketTimestamp = Math.floor(candle.timestamp / BASE_INTERVAL_MS) * BASE_INTERVAL_MS;
-      if (!this.baseCandles.has(bucketTimestamp)) {
-        this.baseCandles.set(bucketTimestamp, { ...candle, timestamp: bucketTimestamp });
-      }
-    }
-    this.pruneOld();
-  }
-
   getCandles(timeInterval: TimeInterval): Candlestick[] {
     const sorted = Array.from(this.baseCandles.values()).sort((a, b) => a.timestamp - b.timestamp);
     const intervalMs = this.timeIntervalMs[timeInterval];
@@ -93,7 +82,7 @@ export class CandleStore {
   }
 
   private pruneOld() {
-    const cutoff = Date.now() - ONE_DAY_MS;
+    const cutoff = Date.now() - RETENTION_MS;
     for (const timestamp of this.baseCandles.keys()) {
       if (timestamp < cutoff) this.baseCandles.delete(timestamp);
     }
