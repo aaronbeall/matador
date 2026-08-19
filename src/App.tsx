@@ -57,17 +57,17 @@ import { MarketDataClient, ExternalDataStatus } from './services/MarketDataClien
 import { Trade } from './types/Trade';
 import { Candlestick, TimeInterval } from './types/Candlestick';
 import {
-  ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine, Customized
+  ComposedChart, Line, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine, Customized
 } from 'recharts';
 import { Logo } from './components/Logo';
 import { Indicator } from './utils/indicators';
 import { CandlestickBar } from './components/CandlestickBar';
-import { ChartTooltip } from './components/ChartTooltip';
+import { OhlcvLegend } from './components/OhlcvLegend';
+import { IndicatorLegend, IndicatorLegendItem } from './components/IndicatorLegend';
 import { CHART_COLORS } from './constants/colors';
 import { formatPrice, formatVolume, formatDelta, formatPercent } from './utils/formatters';
 import { INDICATOR_DEFS } from './constants/indicators';
 import { MACDHistogramBar } from './components/MACDHistogramBar';
-import { MACDTooltip } from './components/MACDTooltip';
 import { WatchlistPanel } from './components/Watchlist/WatchlistPanel';
 import { StrategyPanel } from './components/Strategy/StrategyPanel';
 import { IdeasPanel } from './components/TradeIdeas/IdeasPanel';
@@ -171,6 +171,21 @@ const AppContent = () => {
   // invert a pixel position back into a price.
   const [crosshairPrice, setCrosshairPrice] = useState<number | null>(null);
   const priceScaleRef = useRef<{ invert: (y: number) => number } | null>(null);
+  // Replaces the old hover-following tooltips: anchored overlay panels
+  // (OhlcvLegend/IndicatorLegend) show this candle's values instead — the
+  // hovered one if the mouse is over any of the three chart panes (they
+  // all share one state, so hovering any pane updates all three legends
+  // together), or the latest candle otherwise, so the overlays are never
+  // empty.
+  const [hoveredCandle, setHoveredCandle] = useState<Candlestick | null>(null);
+  const handleChartMouseMove = useCallback((state: any) => {
+    const payload = state?.activePayload?.[0]?.payload;
+    if (payload) setHoveredCandle(payload);
+  }, []);
+  const handleChartMouseLeave = useCallback(() => {
+    setHoveredCandle(null);
+    setCrosshairPrice(null);
+  }, []);
 
   const marketDataClient = useRef<MarketDataClient | null>(null);
   const [wsEnabled, setWsEnabled] = useState(true);
@@ -653,6 +668,38 @@ const AppContent = () => {
     return currentCandle.close >= currentCandle.open;
   }, []);
 
+  // The candle the chart overlays (OhlcvLegend/IndicatorLegend) describe —
+  // whichever one's hovered, across any of the three panes, falling back
+  // to the latest so the overlays are never empty.
+  const displayCandle = hoveredCandle ?? (candles.length ? candles[candles.length - 1] : null);
+
+  const MAIN_OVERLAY_INDICATORS: Indicator[] = ['vwap', 'ema9', 'ema21', 'sma20', 'sma50', 'sma200'];
+  const mainIndicatorItems: IndicatorLegendItem[] = displayCandle
+    ? MAIN_OVERLAY_INDICATORS.filter((id) => indicators.includes(id)).map((id) => ({
+        key: id,
+        label: INDICATOR_DEFS[id].name,
+        value: displayCandle[id] != null ? INDICATOR_DEFS[id].format(displayCandle[id]!) : '—',
+        color: CHART_COLORS[id],
+      }))
+    : [];
+
+  const macdIndicatorItems: IndicatorLegendItem[] = displayCandle
+    ? [
+        { key: 'macd', label: 'MACD', value: displayCandle.macd != null ? INDICATOR_DEFS.macd.format(displayCandle.macd) : '—', color: CHART_COLORS.macdLine },
+        { key: 'signal', label: 'Signal', value: displayCandle.signal != null ? INDICATOR_DEFS.macd.format(displayCandle.signal) : '—', color: CHART_COLORS.macdSignal },
+        {
+          key: 'histogram',
+          label: 'Histogram',
+          value: displayCandle.histogram != null ? INDICATOR_DEFS.macd.format(displayCandle.histogram) : '—',
+          color: (displayCandle.histogram ?? 0) >= 0 ? CHART_COLORS.priceUp : CHART_COLORS.priceDown,
+        },
+      ]
+    : [];
+
+  const rsiIndicatorItems: IndicatorLegendItem[] = displayCandle && displayCandle.rsi != null
+    ? [{ key: 'rsi', label: 'RSI', value: INDICATOR_DEFS.rsi.format(displayCandle.rsi), color: CHART_COLORS.rsi }]
+    : [];
+
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppBar position="static">
@@ -980,16 +1027,23 @@ const AppContent = () => {
           </Menu>
         </Box>
         <Box sx={{ flexGrow: 1, minHeight: '400px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <Box sx={{ flexGrow: 1, minHeight: '60%' }}>
+          <Box sx={{ flexGrow: 1, minHeight: '60%', position: 'relative' }}>
+            {displayCandle && (
+              <Box sx={{ position: 'absolute', top: 8, left: 8, zIndex: 2, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                <OhlcvLegend candle={displayCandle} />
+                <IndicatorLegend items={mainIndicatorItems} />
+              </Box>
+            )}
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart
                 data={getFilteredCandles(candles, timeFrame)}
                 onMouseMove={(state: any) => {
+                  handleChartMouseMove(state);
                   if (state?.chartY != null && priceScaleRef.current) {
                     setCrosshairPrice(priceScaleRef.current.invert(state.chartY));
                   }
                 }}
-                onMouseLeave={() => setCrosshairPrice(null)}
+                onMouseLeave={handleChartMouseLeave}
               >
                 <Customized
                   component={({ yAxisMap }: any) => {
@@ -1016,7 +1070,6 @@ const AppContent = () => {
                   orientation="right"
                   tickFormatter={formatPrice}
                 />
-                <Tooltip content={<ChartTooltip />} />
                 {currentPriceValue && (
                   <ReferenceLine
                     y={currentPriceValue}
@@ -1041,6 +1094,9 @@ const AppContent = () => {
                       fontSize: 11,
                     }}
                   />
+                )}
+                {hoveredCandle && (
+                  <ReferenceLine x={hoveredCandle.timestamp} stroke="#9e9e9e" strokeDasharray="2 2" />
                 )}
                 {levels
                   .filter((level) => level.active && level.symbol === symbol)
@@ -1187,11 +1243,20 @@ const AppContent = () => {
           </Box>
           
           {indicators.includes('macd') && (
-            <Box sx={{ height: '20%' }}>
+            <Box sx={{ height: '20%', position: 'relative' }}>
+              {displayCandle && (
+                <Box sx={{ position: 'absolute', top: 4, left: 8, zIndex: 2 }}>
+                  <IndicatorLegend items={macdIndicatorItems} />
+                </Box>
+              )}
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={getFilteredCandles(candles, timeFrame)} >
+                <ComposedChart
+                  data={getFilteredCandles(candles, timeFrame)}
+                  onMouseMove={handleChartMouseMove}
+                  onMouseLeave={handleChartMouseLeave}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.2)" />
-                  <XAxis 
+                  <XAxis
                     dataKey="timestamp"
                     tickFormatter={formatXAxisTick}
                     domain={getXAxisDomain()}
@@ -1199,7 +1264,9 @@ const AppContent = () => {
                     scale="time"
                   />
                   <YAxis orientation="right" />
-                  <Tooltip content={<MACDTooltip />} />
+                  {hoveredCandle && (
+                    <ReferenceLine x={hoveredCandle.timestamp} stroke="#9e9e9e" strokeDasharray="2 2" />
+                  )}
                   <Bar
                     dataKey="histogram"
                     shape={<MACDHistogramBar />}
@@ -1228,25 +1295,36 @@ const AppContent = () => {
           )}
           
           {indicators.includes('rsi') && (
-            <Box sx={{ height: '20%' }}>
+            <Box sx={{ height: '20%', position: 'relative' }}>
+              {displayCandle && (
+                <Box sx={{ position: 'absolute', top: 4, left: 8, zIndex: 2 }}>
+                  <IndicatorLegend items={rsiIndicatorItems} />
+                </Box>
+              )}
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={getFilteredCandles(candles, timeFrame)} >
+                <ComposedChart
+                  data={getFilteredCandles(candles, timeFrame)}
+                  onMouseMove={handleChartMouseMove}
+                  onMouseLeave={handleChartMouseLeave}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.2)" />
-                  <XAxis 
+                  <XAxis
                     dataKey="timestamp"
                     tickFormatter={formatXAxisTick}
                     domain={getXAxisDomain()}
                     type="number"
                     scale="time"
                   />
-                  <YAxis 
-                    orientation="right" 
+                  <YAxis
+                    orientation="right"
                     domain={[0, 100]}
                     ticks={[0, 30, 70, 100]}
                   />
                   <ReferenceLine y={30} stroke="rgba(255,0,0,0.3)" />
                   <ReferenceLine y={70} stroke="rgba(255,0,0,0.3)" />
-                  <Tooltip content={<ChartTooltip />} />
+                  {hoveredCandle && (
+                    <ReferenceLine x={hoveredCandle.timestamp} stroke="#9e9e9e" strokeDasharray="2 2" />
+                  )}
                   <Line
                     type="monotone"
                     dataKey="rsi"
