@@ -15,11 +15,18 @@ On-demand only — there is no scheduled/cron version of this yet.
 ## Steps
 
 1. **Read state.**
-   - `data/watchlist.json` — use only entries with `active: true`.
+   - `data/watchlist.json` — use only entries with `active: true` (toggled
+     directly from the Watchlist panel's switch — an inactive symbol gets
+     no market-data caching either, not just no analysis).
    - `data/strategy.md` — this is the authoritative rule set. Re-read it
      fresh every run; the user may have edited it since last time.
    - `data/trade-ideas.json`, `data/levels.json` — existing entries, to
      merge against rather than overwrite blindly.
+   - `data/trade-journal.md` — real trade history and lessons relayed by
+     the user in conversation (distinct from `trade-ideas.json`'s
+     proposals). Read the Lessons section before evaluating setups per
+     `strategy.md`'s Discretion clause — a recent, relevant lesson should
+     change what gets proposed, not just sit there unread.
 
 2. **Read the annotated history per symbol — and actually read it, like a
    chart.** A background cache (`vite-plugins/marketData/cache.ts`)
@@ -30,12 +37,18 @@ On-demand only — there is no scheduled/cron version of this yet.
    in the browser first** — this cache runs regardless.
 
    The cache itself is the source of the annotation — every persisted
-   candle already carries `open`/`high`/`low`/`close`/`volume`,
-   `ema9`/`ema21`/`sma20`/`sma50`/`sma200`, `rsi14`, `macd`/`signal`/
-   `histogram`, `atr14`, `vwap` (intraday only — `1m`/`5m`/`15m`, resetting
-   each trading day) and `patterns` (any candlestick pattern detected on
-   that specific candle). It's partitioned so you only ever have to load
-   what a given read actually needs, not one giant file:
+   candle already carries `open`/`high`/`low`/`close`/`volume`, `rvol`
+   (this candle's volume vs. its trailing 20-bar average — >1.5-2x is
+   worth noting as above-average participation, not just a rule of
+   thumb, but a red flag if a breakout/breakdown is happening *without*
+   it), `ema9`/`ema21`/`sma20`/`sma50`/`sma200`, `rsi14`, `macd`/`signal`/
+   `histogram`, `atr14`, `vwap`/`vwapU1`/`vwapL1` (intraday only —
+   `1m`/`5m`/`15m`, resetting each trading day; `vwapU1`/`vwapL1` are the
+   ±1σ volume-weighted bands around vwap — price outside them is
+   statistically stretched for the session) and `patterns` (any
+   candlestick pattern detected on that specific candle). It's
+   partitioned so you only ever have to load what a given read actually
+   needs, not one giant file:
    ```
    data/candles/<SYMBOL>/1m/<YYYY-MM-DD>.md    one file per trading day
    data/candles/<SYMBOL>/5m/<YYYY-MM-DD>.md    one file per trading day
@@ -175,6 +188,15 @@ On-demand only — there is no scheduled/cron version of this yet.
      there is one, otherwise set a deliberate one (don't leave a pending
      condition to watch forever; the engine auto-expires anything past its
      `expiresAt` on its own even if you never rescan).
+   - Also required: `bias` (`bullish`/`bearish`/`neutral` — the directional
+     read the alert represents) and `action` (`long`/`short`/`exit`/`watch`
+     — the actual call to action). **These aren't mechanically derived from
+     each other** — a bearish read is often `watch`, not `short`: this
+     strategy doesn't take every bearish signal as a short entry (check
+     `strategy.md`'s entry criteria), and a break of support might just
+     mean "stand aside," not "reverse and short it." Use `exit` when the
+     alert is invalidating a specific open idea (`relatedIdeaId` set,
+     status `taken`), not a fresh entry signal.
    - **Time-box a condition with `activeFrom` when the signal only means
      something in a specific window** — not evaluated before `activeFrom`
      (defaults to right away if omitted), still auto-expires at

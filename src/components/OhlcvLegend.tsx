@@ -1,5 +1,6 @@
 import { Box, Typography } from '@mui/material';
 import { Candlestick } from '../types/Candlestick';
+import { Indicator } from '../utils/indicators';
 import { CHART_COLORS } from '../constants/colors';
 import { formatPrice, formatVolume } from '../utils/formatters';
 import { ChartOverlayPanel } from './ChartOverlayPanel';
@@ -8,7 +9,13 @@ import { ChartOverlayPanel } from './ChartOverlayPanel';
 // values (not the labels) are all colored by candle direction (bullish vs.
 // bearish), unlike the old per-field-colored tooltip, since that's what
 // the eye actually wants to know at a glance: up or down.
-export const OhlcvLegend = ({ candle }: { candle: Candlestick }) => {
+//
+// ATR/RVOL append onto this same row (rather than getting their own
+// IndicatorLegend rows) since neither has a chart line to go with it —
+// they're numeric context read alongside price, not an overlay. Still
+// gated by `indicators` like everything else so they're configurable, not
+// unconditionally on.
+export const OhlcvLegend = ({ candle, indicators }: { candle: Candlestick; indicators: Indicator[] }) => {
   const color = candle.close >= candle.open ? CHART_COLORS.priceUp : CHART_COLORS.priceDown;
   const fields: [string, string][] = [
     ['O', formatPrice(candle.open)],
@@ -17,6 +24,8 @@ export const OhlcvLegend = ({ candle }: { candle: Candlestick }) => {
     ['C', formatPrice(candle.close)],
     ['Vol', formatVolume(candle.volume)],
   ];
+  if (indicators.includes('atr14') && candle.atr14 != null) fields.push(['ATR', formatPrice(candle.atr14)]);
+  if (indicators.includes('rvol') && candle.rvol != null) fields.push(['RVOL', `${candle.rvol.toFixed(2)}x`]);
 
   return (
     <ChartOverlayPanel>

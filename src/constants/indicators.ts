@@ -56,6 +56,24 @@ export const INDICATOR_DEFS: Record<Indicator, {
     name: 'RSI',
     description: 'Relative Strength Index (14)',
     format: (v: number) => v.toFixed(1)
+  },
+  vwapBands: {
+    id: 'vwapBands',
+    name: 'VWAP Bands',
+    description: 'VWAP ±1σ/±2σ volume-weighted standard deviation bands — shown alongside VWAP itself, toggled independently',
+    format: formatPrice
+  },
+  atr14: {
+    id: 'atr14',
+    name: 'ATR(14)',
+    description: 'Average True Range (14) — typical bar range, shown in the OHLCV readout for stop-sizing',
+    format: formatPrice
+  },
+  rvol: {
+    id: 'rvol',
+    name: 'RVOL',
+    description: "This candle's volume vs. its trailing 20-bar average — shown in the OHLCV readout, flags abnormal-volume bars",
+    format: (v: number) => `${v.toFixed(2)}x`
   }
 };
 

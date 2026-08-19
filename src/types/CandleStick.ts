@@ -18,6 +18,19 @@ export type Candlestick = {
   // chart overlay, just read from data/candles/<symbol>/analysis.md.
   atr14?: number;
   patterns?: string[];
+  // Relative volume — this candle's volume vs. its trailing 20-bar
+  // average (not a session-cumulative RVOL like a scanner shows; a
+  // per-candle spike-detection variant instead, chosen because it fits
+  // the same per-candle annotation pipeline as everything else here).
+  rvol?: number;
+  // VWAP standard-deviation bands — day-aware like vwap itself, attached
+  // alongside it in attachDailyVWAP (src/utils/analysis.ts). Rendered as
+  // part of the existing 'vwap' toggle rather than a separate one, since
+  // they're only ever meaningful together with the vwap line.
+  vwapUpper1?: number;
+  vwapLower1?: number;
+  vwapUpper2?: number;
+  vwapLower2?: number;
 } & {
   [K in Indicator]?: number;
 }

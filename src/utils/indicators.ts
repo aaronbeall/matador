@@ -17,8 +17,16 @@ import {
 } from 'technicalindicators';
 import { MACDResult } from '../types/TechnicalIndicators';
 
-export type Indicator = 'vwap' | 'ema9' | 'ema21' | 'sma20' | 'sma50' | 'sma200' | 'macd' | 'rsi';
-export const ALL_INDICATORS: Indicator[] = ['vwap', 'ema9', 'ema21', 'sma20', 'sma50', 'sma200', 'macd', 'rsi'];
+// 'atr14'/'rvol'/'vwapBands' are configurable the same as every other
+// indicator here even though none of them run through the generic
+// per-indicator calculator below (see attachIndicators' special-casing) —
+// atr14/rvol are attached directly in annotateTimeframe (src/utils/
+// analysis.ts), vwapBands alongside vwap itself in attachDailyVWAP. Their
+// math is always computed regardless of this list either way (see
+// attachIndicators' doc comment) — this list, and the Indicator type
+// itself, only ever gate what's *offered as a toggle in the UI*.
+export type Indicator = 'vwap' | 'vwapBands' | 'ema9' | 'ema21' | 'sma20' | 'sma50' | 'sma200' | 'macd' | 'rsi' | 'atr14' | 'rvol';
+export const ALL_INDICATORS: Indicator[] = ['vwap', 'vwapBands', 'ema9', 'ema21', 'sma20', 'sma50', 'sma200', 'macd', 'rsi', 'atr14', 'rvol'];
 
 export const calculateVWAP = (candles: Candlestick[]): number[] => {
   if (candles.length === 0) return [];
@@ -89,6 +97,52 @@ export const calculateATR = (candles: Candlestick[], period: number = 14): numbe
   });
 };
 
+// A candle's volume vs. the trailing `period`-bar average — flags
+// abnormal-volume bars (breakouts/breakdowns with real participation vs.
+// low-volume noise). Not time-of-day-matched against prior days the way a
+// scanner's session RVOL is; a simpler rolling-average variant that fits
+// this codebase's per-candle annotation model.
+export const calculateRVOL = (candles: Candlestick[], period: number = 20): number[] => {
+  if (candles.length === 0) return [];
+  const avgVolume = sma({ period, values: candles.map(c => c.volume) });
+  const offset = candles.length - avgVolume.length;
+  return avgVolume.map((avg, i) => (avg > 0 ? candles[i + offset].volume / avg : 0));
+};
+
+export interface VWAPBand {
+  vwap: number;
+  upper1: number;
+  lower1: number;
+  upper2: number;
+  lower2: number;
+}
+
+// VWAP plus its volume-weighted standard-deviation bands (±1σ/±2σ) — the
+// same cumulative-VWAP math already in calculateVWAP, extended to also
+// accumulate volume-weighted variance of typical price around it. Callers
+// that need day-aware bands (VWAP resets each session) must pass in a
+// single day's candles, same requirement as calculateVWAP itself.
+export const calculateVWAPBands = (candles: Candlestick[]): VWAPBand[] => {
+  if (candles.length === 0) return [];
+  const vwapSeries = calculateVWAP(candles);
+  let cumVolume = 0;
+  let cumVolumeVariance = 0;
+  return candles.map((c, i) => {
+    const typicalPrice = (c.high + c.low + c.close) / 3;
+    cumVolume += c.volume;
+    const diff = typicalPrice - vwapSeries[i];
+    cumVolumeVariance += c.volume * diff * diff;
+    const stdDev = cumVolume > 0 ? Math.sqrt(cumVolumeVariance / cumVolume) : 0;
+    return {
+      vwap: vwapSeries[i],
+      upper1: vwapSeries[i] + stdDev,
+      lower1: vwapSeries[i] - stdDev,
+      upper2: vwapSeries[i] + 2 * stdDev,
+      lower2: vwapSeries[i] - 2 * stdDev,
+    };
+  });
+};
+
 // Recognized on the most recent bars only (each checker looks at the tail
 // of whatever's passed in) — treat as a confirmation signal alongside a
 // level or trend read, never as a standalone trade trigger.
@@ -138,14 +192,18 @@ export const attachCandlePatterns = (candles: Candlestick[]): Candlestick[] => {
   });
 };
 
-const indicatorCalculators: Record<Indicator, (candles: Candlestick[]) => number[]> = {
-  vwap: calculateVWAP,
+// 'macd'/'vwap'/'vwapBands'/'atr14'/'rvol' are deliberately absent — each
+// is computed and attached through its own dedicated path (see
+// attachIndicators' and annotateTimeframe's special-casing) rather than
+// this generic single-series-per-indicator mechanism, which only fits
+// indicators that produce exactly one number per candle from close price
+// alone.
+const indicatorCalculators: Record<Exclude<Indicator, 'macd' | 'vwap' | 'vwapBands' | 'atr14' | 'rvol'>, (candles: Candlestick[]) => number[]> = {
   ema9: (candles) => calculateEMA(candles, 9),
   ema21: (candles) => calculateEMA(candles, 21),
   sma20: (candles) => calculateSMA(candles, 20),
   sma50: (candles) => calculateSMA(candles, 50),
   sma200: (candles) => calculateSMA(candles, 200),
-  macd: (candles) => calculateMACD(candles).map(v => v.macd),
   rsi: (candles) => calculateRSI(candles),
 };
 
@@ -179,6 +237,12 @@ export const attachIndicators = (
         candlesWithIndicators[i + offset].signal = signal;
         candlesWithIndicators[i + offset].histogram = histogram;
       });
+    } else if (indicator === 'vwap' || indicator === 'vwapBands' || indicator === 'atr14' || indicator === 'rvol') {
+      // No-op here — each is computed and attached by annotateTimeframe/
+      // attachDailyVWAP directly (see the comment on indicatorCalculators
+      // above). Only reachable if some future caller passes the default
+      // wantedIndicators=ALL_INDICATORS instead of the filtered list
+      // annotateTimeframe actually uses.
     } else {
       const values = indicatorCalculators[indicator](candles);
       const offset = candlesWithIndicators.length - values.length;

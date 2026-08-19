@@ -16,5 +16,8 @@ export const CHART_COLORS = {
   macdLine: '#2196f3',
   macdSignal: '#ff9800',
   macd: '#2196f3',              // plain MACD color
-  rsi: '#e91e63'
+  rsi: '#e91e63',
+  vwapBands: '#ff00ff',         // same family as vwap — bands are its envelope
+  atr14: '#00bcd4',             // Cyan
+  rvol: '#ffc107',              // Amber
 };

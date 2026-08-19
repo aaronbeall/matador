@@ -57,14 +57,20 @@ import { MarketDataClient, ExternalDataStatus } from './services/MarketDataClien
 import { Trade } from './types/Trade';
 import { Candlestick, TimeInterval } from './types/Candlestick';
 import {
-  ComposedChart, Line, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine, Customized
+  ComposedChart, Line, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine, Customized, Scatter
 } from 'recharts';
 import { Logo } from './components/Logo';
-import { Indicator } from './utils/indicators';
+import { Indicator, ALL_INDICATORS } from './utils/indicators';
 import { CandlestickBar } from './components/CandlestickBar';
 import { OhlcvLegend } from './components/OhlcvLegend';
 import { IndicatorLegend, IndicatorLegendItem } from './components/IndicatorLegend';
+import { PatternMarkerShape, PatternMarkerPoint } from './components/PatternMarker';
+import { PatternBadges } from './components/PatternBadges';
+import { PatternTooltip } from './components/PatternTooltip';
+import { getPatternColor } from './components/PatternVisuals';
+import { computeAutoLevels } from './utils/autoLevels';
 import { CHART_COLORS } from './constants/colors';
+import { PATTERN_INFO, PatternStrength } from './constants/patterns';
 import { formatPrice, formatVolume, formatDelta, formatPercent } from './utils/formatters';
 import { INDICATOR_DEFS } from './constants/indicators';
 import { MACDHistogramBar } from './components/MACDHistogramBar';
@@ -110,6 +116,9 @@ const SIDEBAR_WIDTH_STORAGE_KEY = 'matador-sidebar-width';
 const SIDEBAR_DEFAULT_WIDTH = 420;
 const SIDEBAR_MIN_WIDTH = 320;
 const SIDEBAR_MAX_WIDTH = 720;
+const INDICATORS_STORAGE_KEY = 'matador-indicators';
+const PATTERNS_STORAGE_KEY = 'matador-patterns';
+const STRENGTH_RANK: Record<PatternStrength, number> = { weak: 1, moderate: 2, strong: 3 };
 
 const getTimeFrameMs = (timeFrame: TimeFrame) => 
   timeFrame === '15m' ? 15 * 60 * 1000 :
@@ -167,7 +176,39 @@ const AppContent = () => {
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('1h');
   const [chartMode, setChartMode] = useState<ChartMode>('candles');
   const [candles, setCandles] = useState<Candlestick[]>([]);
-  const [indicators, setIndicators] = useState<Indicator[]>([]);
+  // Persisted the same way sidebarWidth/notifications-enabled already are
+  // — read once at init with a validating fallback, written back on every
+  // change, so indicator/pattern picks survive a reload instead of
+  // resetting to nothing each time.
+  const [indicators, setIndicators] = useState<Indicator[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(INDICATORS_STORAGE_KEY) ?? '[]');
+      return Array.isArray(stored) ? stored.filter((i): i is Indicator => ALL_INDICATORS.includes(i)) : [];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    localStorage.setItem(INDICATORS_STORAGE_KEY, JSON.stringify(indicators));
+  }, [indicators]);
+
+  const [enabledPatterns, setEnabledPatterns] = useState<string[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(PATTERNS_STORAGE_KEY) ?? 'null');
+      return Array.isArray(stored) ? stored.filter((p): p is string => p in PATTERN_INFO) : Object.keys(PATTERN_INFO);
+    } catch {
+      return Object.keys(PATTERN_INFO);
+    }
+  });
+  useEffect(() => {
+    localStorage.setItem(PATTERNS_STORAGE_KEY, JSON.stringify(enabledPatterns));
+  }, [enabledPatterns]);
+  const handlePatternToggle = (patternKey: string) => {
+    setEnabledPatterns((prev) =>
+      prev.includes(patternKey) ? prev.filter((p) => p !== patternKey) : [...prev, patternKey]
+    );
+  };
+
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
   // Horizontal price crosshair on the main chart — Recharts' Tooltip only
   // gives a vertical, nearest-candle crosshair out of the box; Y is
@@ -185,13 +226,31 @@ const AppContent = () => {
   // empty.
   const [hoveredCandle, setHoveredCandle] = useState<Candlestick | null>(null);
   const handleChartMouseMove = useCallback((state: any) => {
-    const payload = state?.activePayload?.[0]?.payload;
-    if (payload) setHoveredCandle(payload);
+    // Don't just take activePayload[0] — the pattern-marker Scatter layer
+    // shares the same x-position and contributes its own entry (a
+    // PatternMarkerPoint, not a Candlestick) whose payload can land first
+    // in the array, which crashed OhlcvLegend reading fields (volume,
+    // open, ...) that only exist on the real candle payload.
+    const entry = state?.activePayload?.find((p: any) => p?.payload && typeof p.payload.open === 'number');
+    if (entry) setHoveredCandle(entry.payload);
   }, []);
   const handleChartMouseLeave = useCallback(() => {
     setHoveredCandle(null);
     setCrosshairPrice(null);
   }, []);
+
+  // Direct hover on a pattern marker — separate from hoveredCandle since
+  // it drives a cursor-following tooltip (PatternTooltip) positioned via
+  // viewport coordinates, not tied to the chart's own x/y scales.
+  const [hoveredPatternMarker, setHoveredPatternMarker] = useState<{
+    point: PatternMarkerPoint;
+    x: number;
+    y: number;
+  } | null>(null);
+  const handlePatternMarkerHover = useCallback((point: PatternMarkerPoint, evt: React.MouseEvent) => {
+    setHoveredPatternMarker({ point, x: evt.clientX, y: evt.clientY });
+  }, []);
+  const handlePatternMarkerLeave = useCallback(() => setHoveredPatternMarker(null), []);
 
   const marketDataClient = useRef<MarketDataClient | null>(null);
   const [wsEnabled, setWsEnabled] = useState(true);
@@ -568,6 +627,14 @@ const AppContent = () => {
     });
   }, []);
 
+  const handleToggleWatchlistActive = useCallback((toggledSymbol: string, active: boolean) => {
+    setWatchlist((prev) => {
+      const next = prev.map((e) => (e.symbol === toggledSymbol ? { ...e, active } : e));
+      saveWatchlist(next).catch(() => {});
+      return next;
+    });
+  }, []);
+
   const handleConfirm = useCallback(() => {
     const newSymbol = symbolInput.toUpperCase();
     setSymbol(newSymbol);
@@ -730,6 +797,42 @@ const AppContent = () => {
   const rsiIndicatorItems: IndicatorLegendItem[] = displayCandle && displayCandle.rsi != null
     ? [{ key: 'rsi', label: 'RSI', value: INDICATOR_DEFS.rsi.format(displayCandle.rsi), color: CHART_COLORS.rsi }]
     : [];
+
+  // Hover-only, unlike displayCandle's OHLCV/indicator readouts which fall
+  // back to the latest candle — a persistent "Doji" badge for whatever the
+  // latest candle happens to be is noise more often than not (doji is by
+  // far the most common pattern), so this only shows on a deliberate hover,
+  // matching the marker's own tooltip behavior exactly.
+  const displayPatterns: string[] = (hoveredCandle?.patterns ?? []).filter((p) => enabledPatterns.includes(p));
+
+  // One marker per candle carrying an enabled pattern, positioned above
+  // the high for a bearish read, below the low for bullish, at the
+  // midpoint for neutral/mixed — see PatternMarker.tsx for the shape,
+  // PatternTooltip.tsx for the hover detail.
+  const patternMarkers: PatternMarkerPoint[] = filteredCandles
+    .map((c) => ({ ...c, patterns: (c.patterns ?? []).filter((p) => enabledPatterns.includes(p)) }))
+    .filter((c) => c.patterns.length > 0)
+    .map((c) => {
+      const dirs = c.patterns.map((p) => PATTERN_INFO[p]?.direction ?? 'neutral');
+      const hasBullish = dirs.includes('bullish');
+      const hasBearish = dirs.includes('bearish');
+      const direction: PatternMarkerPoint['direction'] =
+        hasBullish && hasBearish ? 'mixed' : hasBullish ? 'bullish' : hasBearish ? 'bearish' : 'neutral';
+      const price = direction === 'bearish' ? c.high : direction === 'bullish' ? c.low : (c.high + c.low) / 2;
+      // The marker's brightness follows the strongest signal at this
+      // candle, not just the first pattern found — a candle carrying both
+      // a doji and a morning-star should read as strong, not weak.
+      const strength = c.patterns.reduce<PatternStrength>((best, p) => {
+        const s = PATTERN_INFO[p]?.strength ?? 'weak';
+        return STRENGTH_RANK[s] > STRENGTH_RANK[best] ? s : best;
+      }, 'weak');
+      return { timestamp: c.timestamp, price, direction, strength, patterns: c.patterns };
+    });
+
+  // Auto-computed reference levels (prior day H/L/C, premarket H/L,
+  // opening range) — only meaningful zoomed into intraday granularity,
+  // not on the 1d/1w interval where "yesterday" is just the adjacent bar.
+  const autoLevels = timeInterval === '1d' || timeInterval === '1w' ? [] : computeAutoLevels(candles);
 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -1022,6 +1125,7 @@ const AppContent = () => {
             anchorEl={menuAnchor}
             open={Boolean(menuAnchor)}
             onClose={() => setMenuAnchor(null)}
+            slotProps={{ paper: { sx: { maxHeight: 480 } } }}
           >
             {Object.values(INDICATOR_DEFS).map(indicator => (
               <MuiTooltip
@@ -1033,7 +1137,7 @@ const AppContent = () => {
                 <MenuItem>
                   <FormControlLabel
                     control={
-                      <Checkbox 
+                      <Checkbox
                         checked={indicators.includes(indicator.id)}
                         onChange={() => handleIndicatorChange(indicator.id)}
                       />
@@ -1055,14 +1159,49 @@ const AppContent = () => {
                 </MenuItem>
               </MuiTooltip>
             ))}
+            <Divider />
+            <Typography variant="overline" sx={{ px: 2, py: 0.5, display: 'block', color: 'text.secondary' }}>
+              Candle Patterns
+            </Typography>
+            {Object.entries(PATTERN_INFO).map(([key, info]) => (
+              <MuiTooltip key={key} title={info.meaning} placement="right" arrow>
+                <MenuItem>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={enabledPatterns.includes(key)}
+                        onChange={() => handlePatternToggle(key)}
+                      />
+                    }
+                    label={
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box
+                          sx={{
+                            width: 12,
+                            height: 12,
+                            borderRadius: '50%',
+                            bgcolor: getPatternColor(info.direction, info.strength),
+                          }}
+                        />
+                        {info.label}
+                        <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'capitalize' }}>
+                          · {info.direction}
+                        </Typography>
+                      </Box>
+                    }
+                  />
+                </MenuItem>
+              </MuiTooltip>
+            ))}
           </Menu>
         </Box>
         <Box sx={{ flexGrow: 1, minHeight: '400px', display: 'flex', flexDirection: 'column', gap: 2 }}>
           <Box sx={{ flexGrow: 1, minHeight: '60%', position: 'relative' }}>
             {displayCandle && (
               <Box sx={{ position: 'absolute', top: 8, left: 8, zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.5 }}>
-                <OhlcvLegend candle={displayCandle} />
+                <OhlcvLegend candle={displayCandle} indicators={indicators} />
                 <IndicatorLegend items={mainIndicatorItems} />
+                <PatternBadges patterns={displayPatterns} />
               </Box>
             )}
             {filteredCandles.length === 0 ? (
@@ -1152,6 +1291,21 @@ const AppContent = () => {
                       }}
                     />
                   ))}
+                {autoLevels.map((level) => (
+                  <ReferenceLine
+                    key={level.id}
+                    y={level.price}
+                    stroke="#9e9e9e"
+                    strokeDasharray="2 2"
+                    strokeOpacity={0.4}
+                    label={{
+                      value: `${level.label} ${formatPrice(level.price)}`,
+                      position: 'insideLeft',
+                      fill: '#9e9e9e',
+                      fontSize: 10,
+                    }}
+                  />
+                ))}
                 {(chartMode === 'candles' || chartMode === 'both') && (
                   <Bar
                     dataKey={d => [d.low, d.high]}
@@ -1215,6 +1369,54 @@ const AppContent = () => {
                     isAnimationActive={false}
                   />
                 )}
+                {indicators.includes('vwapBands') && (
+                  <>
+                    <Line
+                      key="vwapUpper1"
+                      type="monotone"
+                      dataKey="vwapUpper1"
+                      stroke={CHART_COLORS.vwap}
+                      strokeOpacity={0.4}
+                      strokeWidth={1}
+                      dot={false}
+                      name="VWAP +1σ"
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      key="vwapLower1"
+                      type="monotone"
+                      dataKey="vwapLower1"
+                      stroke={CHART_COLORS.vwap}
+                      strokeOpacity={0.4}
+                      strokeWidth={1}
+                      dot={false}
+                      name="VWAP -1σ"
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      key="vwapUpper2"
+                      type="monotone"
+                      dataKey="vwapUpper2"
+                      stroke={CHART_COLORS.vwap}
+                      strokeOpacity={0.2}
+                      strokeWidth={1}
+                      dot={false}
+                      name="VWAP +2σ"
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      key="vwapLower2"
+                      type="monotone"
+                      dataKey="vwapLower2"
+                      stroke={CHART_COLORS.vwap}
+                      strokeOpacity={0.2}
+                      strokeWidth={1}
+                      dot={false}
+                      name="VWAP -2σ"
+                      isAnimationActive={false}
+                    />
+                  </>
+                )}
                 {indicators.includes('ema9') && (
                   <Line
                     key="ema9"
@@ -1275,10 +1477,28 @@ const AppContent = () => {
                     isAnimationActive={false}
                   />
                 )}
+                {patternMarkers.length > 0 && (
+                  <Scatter
+                    data={patternMarkers}
+                    dataKey="price"
+                    shape={(props: any) => (
+                      <PatternMarkerShape {...props} onHover={handlePatternMarkerHover} onLeave={handlePatternMarkerLeave} />
+                    )}
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
+                )}
               </ComposedChart>
             </ResponsiveContainer>
             )}
           </Box>
+          {hoveredPatternMarker && (
+            <PatternTooltip
+              point={hoveredPatternMarker.point}
+              x={hoveredPatternMarker.x}
+              y={hoveredPatternMarker.y}
+            />
+          )}
 
           {indicators.includes('macd') && (
             <Box sx={{ height: '20%', position: 'relative' }}>
@@ -1413,7 +1633,9 @@ const AppContent = () => {
               {sidebarTab === 'watchlist' && (
                 <>
                   <SkillTip>
-                    Add/remove symbols here directly, or just ask Claude to add one to the watchlist.
+                    Add/remove symbols here directly, or just ask Claude to add one to the watchlist. The
+                    switch pauses a symbol entirely — no market data caching, no find-trades analysis —
+                    without removing it.
                   </SkillTip>
                   <WatchlistPanel
                     watchlist={watchlist}
@@ -1421,6 +1643,7 @@ const AppContent = () => {
                     onSelectSymbol={handleSelectWatchlistSymbol}
                     onAdd={handleAddWatchlistSymbol}
                     onRemove={handleRemoveWatchlistSymbol}
+                    onToggleActive={handleToggleWatchlistActive}
                   />
                 </>
               )}
@@ -1439,7 +1662,7 @@ const AppContent = () => {
                     Populated by the <code>find-trades</code> skill — ask Claude to "scan for trades" or run{' '}
                     <code>/find-trades</code>.
                   </SkillTip>
-                  <IdeasPanel ideas={tradeIdeas} lastUpdated={analysisDataUpdatedAt} />
+                  <IdeasPanel ideas={tradeIdeas} lastUpdated={analysisDataUpdatedAt} currentSymbol={symbol} />
                 </>
               )}
               {sidebarTab === 'levels' && (
@@ -1448,7 +1671,7 @@ const AppContent = () => {
                     Also written by <code>find-trades</code> — support/resistance levels get flagged even when no
                     trade idea qualifies.
                   </SkillTip>
-                  <LevelsPanel levels={levels} />
+                  <LevelsPanel levels={levels} currentSymbol={symbol} />
                 </>
               )}
               {sidebarTab === 'alerts' && (
@@ -1458,7 +1681,7 @@ const AppContent = () => {
                     level. Enable the bell icon (top right) for real desktop notifications on new ones. Acknowledging
                     one here doesn't need a skill.
                   </SkillTip>
-                  <AlertsPanel alerts={alerts} onAcknowledge={handleAcknowledgeAlert} />
+                  <AlertsPanel alerts={alerts} currentSymbol={symbol} onAcknowledge={handleAcknowledgeAlert} />
                 </>
               )}
               {sidebarTab === 'activity' && (

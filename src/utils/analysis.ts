@@ -2,8 +2,9 @@ import { Candlestick, TimeInterval } from '../types/Candlestick';
 import { TimeframeAnalysis } from '../types/AnalysisSnapshot';
 import {
   ALL_INDICATORS,
-  calculateVWAP,
+  calculateVWAPBands,
   calculateATR,
+  calculateRVOL,
   attachIndicators,
   attachCandlePatterns,
 } from './indicators';
@@ -63,10 +64,11 @@ export function periodKeyFor(interval: TimeInterval, timestamp: number): string 
 // --- Annotation ------------------------------------------------------------
 
 // VWAP conventionally resets every trading session. Annotating it across a
-// multi-day series means computing it per calendar day and stitching the
-// days back together, not running one cumulative VWAP over the whole
-// window (which is what attachIndicators' default VWAP would otherwise do,
-// and would just be wrong the moment more than one day is loaded).
+// multi-day series means computing it (plus its ±1σ/±2σ bands) per
+// calendar day and stitching the days back together, not running one
+// cumulative VWAP over the whole window (which is what attachIndicators'
+// default VWAP would otherwise do, and would just be wrong the moment
+// more than one day is loaded).
 function attachDailyVWAP(candles: Candlestick[]): Candlestick[] {
   const byDay = new Map<string, Candlestick[]>();
   for (const c of candles) {
@@ -75,9 +77,13 @@ function attachDailyVWAP(candles: Candlestick[]): Candlestick[] {
     byDay.get(key)!.push(c);
   }
   for (const dayCandles of byDay.values()) {
-    const vwapSeries = calculateVWAP(dayCandles);
+    const bands = calculateVWAPBands(dayCandles);
     dayCandles.forEach((c, i) => {
-      c.vwap = vwapSeries[i];
+      c.vwap = bands[i].vwap;
+      c.vwapUpper1 = bands[i].upper1;
+      c.vwapLower1 = bands[i].lower1;
+      c.vwapUpper2 = bands[i].upper2;
+      c.vwapLower2 = bands[i].lower2;
     });
   }
   return candles;
@@ -105,6 +111,12 @@ export function annotateTimeframe(candles: Candlestick[], opts: { intraday: bool
   const atrOffset = annotated.length - atrSeries.length;
   atrSeries.forEach((value, i) => {
     annotated[i + atrOffset].atr14 = value;
+  });
+
+  const rvolSeries = calculateRVOL(candles, 20);
+  const rvolOffset = annotated.length - rvolSeries.length;
+  rvolSeries.forEach((value, i) => {
+    annotated[i + rvolOffset].rvol = value;
   });
 
   if (opts.intraday) annotated = attachDailyVWAP(annotated);
@@ -141,18 +153,18 @@ function formatTime(timestamp: number, interval: TimeInterval): string {
 
 export function renderTimeframeTable(interval: TimeInterval, block: TimeframeAnalysis): string {
   const intraday = isIntraday(interval);
-  const headers = ['time', 'open', 'high', 'low', 'close', 'volume', 'ema9', 'ema21', 'sma20', 'sma50', 'sma200'];
-  if (intraday) headers.push('vwap');
+  const headers = ['time', 'open', 'high', 'low', 'close', 'volume', 'rvol', 'ema9', 'ema21', 'sma20', 'sma50', 'sma200'];
+  if (intraday) headers.push('vwap', 'vwapU1', 'vwapL1');
   headers.push('rsi14', 'macd', 'signal', 'histogram', 'atr14', 'patterns');
 
   const rows = block.candles.map((c) => {
     const cells = [
       formatTime(c.timestamp, interval),
       round(c.open, 2), round(c.high, 2), round(c.low, 2), round(c.close, 2),
-      String(c.volume),
+      String(c.volume), round(c.rvol, 2),
       round(c.ema9, 2), round(c.ema21, 2), round(c.sma20, 2), round(c.sma50, 2), round(c.sma200, 2),
     ];
-    if (intraday) cells.push(round(c.vwap, 2));
+    if (intraday) cells.push(round(c.vwap, 2), round(c.vwapUpper1, 2), round(c.vwapLower1, 2));
     cells.push(
       round(c.rsi, 1), round(c.macd, 3), round(c.signal, 3), round(c.histogram, 3), round(c.atr14, 3),
       c.patterns?.length ? c.patterns.join(', ') : ''

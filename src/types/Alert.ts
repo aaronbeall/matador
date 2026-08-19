@@ -1,4 +1,12 @@
 import { TimeInterval } from './Candlestick';
+import { Direction } from '../constants/direction';
+
+// What this alert actually says to DO — distinct from `bias` (the
+// directional read itself). A bearish read doesn't automatically mean
+// "short": it might just mean "stand aside" (no short in the strategy for
+// this setup) or "exit" (invalidating a long already taken). Claude sets
+// this deliberately per alert, not derived mechanically from bias.
+export type AlertAction = 'long' | 'short' | 'exit' | 'watch';
 
 // The technical trigger — evaluated server-side against the annotated
 // candle history (vite-plugins/marketData/alertsEngine.ts) whenever it's
@@ -37,6 +45,8 @@ export interface Alert {
   severity: AlertSeverity;
   status: AlertStatus;
   condition: AlertCondition; // the technical trigger — see AlertsPanel's expandable detail view
+  bias: Direction; // the directional read this alert represents
+  action: AlertAction; // what to actually do about it — see AlertAction
   headline: string; // succinct, notification-ready: "QQQ broke above $730.50 resistance"
   rationale: string; // why this matters
   actionGuidance: string; // what to do / watch for next
