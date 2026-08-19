@@ -13,6 +13,7 @@ import { Levels } from '../types/Level';
 import { Alerts } from '../types/Alert';
 import { AnalysisLog } from '../types/AnalysisLog';
 import { Skills } from '../types/Skill';
+import { Theses } from '../types/Thesis';
 
 export async function getWatchlist(): Promise<Watchlist> {
   const res = await fetch('/api/watchlist');
@@ -69,6 +70,21 @@ export async function saveAlerts(alerts: Alerts): Promise<void> {
     body: JSON.stringify(alerts),
   });
   if (!res.ok) throw new Error('Failed to save alerts');
+}
+
+export async function getThesis(): Promise<Theses> {
+  const res = await fetch('/api/thesis');
+  if (!res.ok) throw new Error('Failed to load thesis');
+  return res.json();
+}
+
+export async function saveThesis(thesis: Theses): Promise<void> {
+  const res = await fetch('/api/thesis', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(thesis),
+  });
+  if (!res.ok) throw new Error('Failed to save thesis');
 }
 
 export async function getAnalysisLog(): Promise<AnalysisLog> {

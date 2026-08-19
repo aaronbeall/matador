@@ -33,6 +33,7 @@ const JSON_COLLECTIONS: Record<string, string> = {
   levels: 'levels.json',
   alerts: 'alerts.json',
   'analysis-log': 'analysis-log.json',
+  thesis: 'thesis.json',
 };
 
 function ensureDataFiles() {

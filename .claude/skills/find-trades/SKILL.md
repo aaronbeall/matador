@@ -219,14 +219,27 @@ On-demand only — there is no scheduled/cron version of this yet.
      just keeps getting checked for nothing. This is what keeps repeated
      scans from accumulating near-duplicate alerts for the same condition.
 
-7. **Append to `data/analysis-log.json`.** One entry per symbol scanned
+7. **Update `data/thesis.json` — the standing read, not a proposal.**
+   Independent of whether a trade idea qualified this run: write/replace
+   this symbol's entry (see `src/types/Thesis.ts`) with the current
+   `sentiment` (bullish/bearish/neutral), `stance` (long/short/hold —
+   **not** mechanically derived from sentiment, same caveat as an alert's
+   `action`: a bearish read is often `hold`, not `short`, if nothing in
+   `strategy.md` actually qualifies a short here), a one-line `summary`,
+   the fuller `reasoning` from your market-structure read in step 3, and
+   `invalidation` if there's a concrete level/condition that would change
+   your mind. One entry per symbol — overwrite the prior one, this isn't
+   a history log. Skip writing it only if data quality was too thin to
+   form any real read (say so in the analysis-log entry instead).
+
+8. **Append to `data/analysis-log.json`.** One entry per symbol scanned
    this run, always — including "no data yet", "insufficient history",
    and "no qualifying setup" outcomes. This is what makes the Activity
    tab in the UI a real record of what ran rather than only showing
    successes. See `src/types/AnalysisLog.ts`. Keep the log bounded —
    trim to the most recent ~200 entries when writing.
 
-8. **Report back.** Tell the user, in plain language, what ran: symbols
+9. **Report back.** Tell the user, in plain language, what ran: symbols
    scanned, symbols skipped and why (no data / no qualifying setup), and
    any new ideas with their thesis. If nothing qualified, say so plainly
    — that's a legitimate, useful result, not a failure. The UI updates

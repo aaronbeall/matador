@@ -42,6 +42,7 @@ import {
   Settings as SettingsIcon,
   Star as WatchlistIcon,
   MenuBook as StrategyIcon,
+  Psychology as ThesisIcon,
   Lightbulb as IdeasIcon,
   Timeline as LevelsIcon,
   Notifications as AlertsIcon,
@@ -76,6 +77,7 @@ import { MACDHistogramBar } from './components/MACDHistogramBar';
 import { WatchlistPanel } from './components/Watchlist/WatchlistPanel';
 import { StrategyPanel } from './components/Strategy/StrategyPanel';
 import { IdeasPanel } from './components/TradeIdeas/IdeasPanel';
+import { ThesisPanel } from './components/Thesis/ThesisPanel';
 import { LevelsPanel } from './components/Levels/LevelsPanel';
 import { AlertsPanel } from './components/Alerts/AlertsPanel';
 import { ActivityPanel } from './components/Activity/ActivityPanel';
@@ -88,6 +90,7 @@ import { TradeIdea } from './types/TradeIdea';
 import { Level as LevelType } from './types/Level';
 import { Alert as AlertType } from './types/Alert';
 import { AnalysisLogEntry } from './types/AnalysisLog';
+import { Thesis } from './types/Thesis';
 import { Skill } from './types/Skill';
 import {
   getWatchlist,
@@ -97,6 +100,7 @@ import {
   getTradeIdeas,
   getLevels,
   getAlerts,
+  getThesis,
   saveAlerts,
   getAnalysisLog,
   getSkills,
@@ -106,10 +110,10 @@ import {
 
 type TimeFrame = '15m' | '1h' | '3h' | '6h' | '1d' | '1w';
 type ChartMode = 'candles' | 'lines' | 'both';
-type SidebarTab = 'watchlist' | 'strategy' | 'ideas' | 'levels' | 'alerts' | 'activity' | 'skills';
+type SidebarTab = 'watchlist' | 'strategy' | 'thesis' | 'ideas' | 'levels' | 'alerts' | 'activity' | 'skills';
 // Tabs whose "new since last looked" state is worth tracking — Watchlist
 // and Strategy are directly user/Claude-edited, not "arrived" content.
-const TRACKED_TABS: SidebarTab[] = ['ideas', 'levels', 'activity'];
+const TRACKED_TABS: SidebarTab[] = ['thesis', 'ideas', 'levels', 'activity'];
 const LAST_SEEN_STORAGE_KEY = 'matador-sidebar-last-seen';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'matador-sidebar-width';
 const SIDEBAR_DEFAULT_WIDTH = 420;
@@ -132,7 +136,7 @@ const SIDEBAR_TAB_STORAGE_KEY = 'matador-sidebar-tab';
 const VALID_TIME_INTERVALS: TimeInterval[] = ['1m', '5m', '15m', '1h', '1d', '1w'];
 const VALID_TIME_FRAMES: TimeFrame[] = ['15m', '1h', '3h', '6h', '1d', '1w'];
 const VALID_CHART_MODES: ChartMode[] = ['candles', 'lines', 'both'];
-const VALID_SIDEBAR_TABS: SidebarTab[] = ['watchlist', 'strategy', 'ideas', 'levels', 'alerts', 'activity', 'skills'];
+const VALID_SIDEBAR_TABS: SidebarTab[] = ['watchlist', 'strategy', 'thesis', 'ideas', 'levels', 'alerts', 'activity', 'skills'];
 
 function readStoredString<T extends string>(key: string, valid: T[], fallback: T): T {
   const stored = localStorage.getItem(key);
@@ -370,6 +374,7 @@ const AppContent = () => {
   const [strategyLoading, setStrategyLoading] = useState(false);
   const [strategyError, setStrategyError] = useState<string | null>(null);
   const [tradeIdeas, setTradeIdeas] = useState<TradeIdea[]>([]);
+  const [thesis, setThesis] = useState<Thesis[]>([]);
   const [levels, setLevels] = useState<LevelType[]>([]);
   const [alerts, setAlerts] = useState<AlertType[]>([]);
   const [analysisLog, setAnalysisLog] = useState<AnalysisLogEntry[]>([]);
@@ -405,8 +410,9 @@ const AppContent = () => {
     if (sidebarOpen && TRACKED_TABS.includes(sidebarTab)) {
       setLastSeenAt((prev) => ({ ...prev, [sidebarTab]: new Date().toISOString() }));
     }
-  }, [sidebarOpen, sidebarTab, tradeIdeas, levels, analysisLog]);
+  }, [sidebarOpen, sidebarTab, thesis, tradeIdeas, levels, analysisLog]);
 
+  const thesisNewCount = thesis.filter((t) => t.updatedAt > (lastSeenAt.thesis ?? '')).length;
   const ideasNewCount = tradeIdeas.filter(
     (i) => i.status === 'proposed' && i.createdAt > (lastSeenAt.ideas ?? '')
   ).length;
@@ -419,6 +425,7 @@ const AppContent = () => {
   const sidebarNavItems: SidebarNavItem[] = [
     { value: 'watchlist', label: 'Watchlist', icon: <WatchlistIcon /> },
     { value: 'strategy', label: 'Strategy', icon: <StrategyIcon /> },
+    { value: 'thesis', label: 'Thesis', icon: <ThesisIcon />, badgeCount: thesisNewCount },
     { value: 'ideas', label: 'Ideas', icon: <IdeasIcon />, badgeCount: ideasNewCount },
     { value: 'levels', label: 'Levels', icon: <LevelsIcon />, badgeCount: levelsNewCount },
     { value: 'alerts', label: 'Alerts', icon: <AlertsIcon />, badgeCount: alertsUnacknowledgedCount },
@@ -540,6 +547,9 @@ const AppContent = () => {
     }
     if (!only || only === 'trade-ideas') {
       tasks.push(getTradeIdeas().then(setTradeIdeas).catch(() => {}));
+    }
+    if (!only || only === 'thesis') {
+      tasks.push(getThesis().then(setThesis).catch(() => {}));
     }
     if (!only || only === 'levels') {
       tasks.push(getLevels().then(setLevels).catch(() => {}));
@@ -1689,6 +1699,16 @@ const AppContent = () => {
                     through the change.
                   </SkillTip>
                   <StrategyPanel strategyText={strategyText} loading={strategyLoading} error={strategyError} />
+                </>
+              )}
+              {sidebarTab === 'thesis' && (
+                <>
+                  <SkillTip>
+                    Claude's standing read on each symbol — written directly in chat when you ask for an
+                    analysis or a prediction, no skill needed. Distinct from Ideas (a concrete trade
+                    proposal) and Alerts (a one-shot trigger) — this is the running "why" behind them.
+                  </SkillTip>
+                  <ThesisPanel thesis={thesis} currentSymbol={symbol} />
                 </>
               )}
               {sidebarTab === 'ideas' && (
