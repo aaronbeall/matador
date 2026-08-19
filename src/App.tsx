@@ -16,22 +16,14 @@ import {
   Alert as MuiAlert,
   InputAdornment,
   Divider,
-  ToggleButton, 
+  ToggleButton,
   ToggleButtonGroup,
   Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
   Tooltip as MuiTooltip,
   Menu,
   MenuItem,
   FormControlLabel,
   Checkbox,
-  Drawer,
   Badge,
 } from '@mui/material';
 import {
@@ -58,15 +50,14 @@ import {
   Extension as SkillsIcon,
   NotificationsActive as NotificationsOnIcon,
   NotificationsOff as NotificationsOffIcon,
+  Close as CloseIcon,
 } from '@mui/icons-material';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { MarketDataClient, ExternalDataStatus } from './services/MarketDataClient';
 import { Trade } from './types/Trade';
 import { Candlestick, TimeInterval } from './types/Candlestick';
-import { styled } from '@mui/material/styles';
-import { TooltipProps } from 'recharts';
 import {
-  ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine
+  ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine, Customized
 } from 'recharts';
 import { Logo } from './components/Logo';
 import { Indicator } from './utils/indicators';
@@ -115,6 +106,10 @@ type SidebarTab = 'watchlist' | 'strategy' | 'ideas' | 'levels' | 'alerts' | 'ac
 // and Strategy are directly user/Claude-edited, not "arrived" content.
 const TRACKED_TABS: SidebarTab[] = ['ideas', 'levels', 'activity'];
 const LAST_SEEN_STORAGE_KEY = 'matador-sidebar-last-seen';
+const SIDEBAR_WIDTH_STORAGE_KEY = 'matador-sidebar-width';
+const SIDEBAR_DEFAULT_WIDTH = 420;
+const SIDEBAR_MIN_WIDTH = 320;
+const SIDEBAR_MAX_WIDTH = 720;
 
 const getTimeFrameMs = (timeFrame: TimeFrame) => 
   timeFrame === '15m' ? 15 * 60 * 1000 :
@@ -168,6 +163,14 @@ const AppContent = () => {
   const [candles, setCandles] = useState<Candlestick[]>([]);
   const [indicators, setIndicators] = useState<Indicator[]>([]);
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
+  // Horizontal price crosshair on the main chart — Recharts' Tooltip only
+  // gives a vertical, nearest-candle crosshair out of the box; Y is
+  // continuous, not categorical, so there's no built-in equivalent for
+  // "price under the cursor." priceScaleRef captures the chart's live d3
+  // Y scale (via the Customized child below) so the mouse handler can
+  // invert a pixel position back into a price.
+  const [crosshairPrice, setCrosshairPrice] = useState<number | null>(null);
+  const priceScaleRef = useRef<{ invert: (y: number) => number } | null>(null);
 
   const marketDataClient = useRef<MarketDataClient | null>(null);
   const [wsEnabled, setWsEnabled] = useState(true);
@@ -191,6 +194,30 @@ const AppContent = () => {
   // ever drops. See vite-plugins/localDataApi.ts.
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('watchlist');
+  // Docked, resizable pane (not an overlay drawer) — width persists across
+  // sessions the same way notification/last-seen preferences already do.
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+    return stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH ? stored : SIDEBAR_DEFAULT_WIDTH;
+  });
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
+  const handleSidebarResizeStart = useCallback((downEvent: React.MouseEvent) => {
+    downEvent.preventDefault();
+    const startX = downEvent.clientX;
+    const startWidth = sidebarWidth;
+    const onMove = (moveEvent: MouseEvent) => {
+      const next = startWidth + (startX - moveEvent.clientX); // dragging left (toward chart) widens the pane
+      setSidebarWidth(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, next)));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [sidebarWidth]);
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [strategyText, setStrategyText] = useState<string | null>(null);
   const [strategyLoading, setStrategyLoading] = useState(false);
@@ -584,12 +611,6 @@ const AppContent = () => {
 
   const currentPriceValue = wsEnabled ? trade?.price : currentPrice;
 
-  const StyledTableCell = styled(TableCell)(({ theme }) => ({
-    color: theme.palette.text.secondary,
-    fontSize: '0.875rem',
-    padding: '6px 16px',
-  }));
-
   const formatXAxisTick = useCallback((timestamp: number) => {
     const date = new Date(timestamp);
     switch (timeFrame) {
@@ -728,114 +749,42 @@ const AppContent = () => {
             )}
           </Box>
           <Box sx={{ flexGrow: 1 }} />
-          <ConnectionDiagnostics
-            connectionState={connectionState}
-            externalDataStatus={externalDataStatus}
-            symbol={symbol}
-            onReconnectClient={handleReconnectClient}
-            onReconnectExternal={handleReconnectExternal}
-            onRebuildCache={handleRebuildCache}
-          />
-          <MuiTooltip title={notificationsEnabled ? 'Desktop alerts on — click to disable' : 'Enable desktop alerts for new alerts'}>
-            <IconButton onClick={handleToggleNotifications} color="inherit" sx={{ mr: 1 }}>
-              {notificationsEnabled ? <NotificationsOnIcon /> : <NotificationsOffIcon />}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <ConnectionDiagnostics
+              connectionState={connectionState}
+              externalDataStatus={externalDataStatus}
+              symbol={symbol}
+              onReconnectClient={handleReconnectClient}
+              onReconnectExternal={handleReconnectExternal}
+              onRebuildCache={handleRebuildCache}
+            />
+            <MuiTooltip title={notificationsEnabled ? 'Desktop alerts on — click to disable' : 'Enable desktop alerts for new alerts'}>
+              <IconButton onClick={handleToggleNotifications} color="inherit">
+                {notificationsEnabled ? <NotificationsOnIcon /> : <NotificationsOffIcon />}
+              </IconButton>
+            </MuiTooltip>
+            <Divider orientation="vertical" flexItem sx={{ mx: 1, my: 1.5 }} />
+            <MuiTooltip title={sidebarOpen ? 'Close panel' : 'Watchlist / Strategy / Ideas'}>
+              <IconButton onClick={() => setSidebarOpen((open) => !open)} color="inherit">
+                <Badge variant="dot" color="error" overlap="circular" invisible={!hasAnyNewAnalysisData}>
+                  <ListAltIcon />
+                </Badge>
+              </IconButton>
+            </MuiTooltip>
+            <IconButton onClick={toggleTheme} color="inherit">
+              {isDarkMode ? <Brightness7 /> : <Brightness4 />}
             </IconButton>
-          </MuiTooltip>
-          <MuiTooltip title="Watchlist / Strategy / Ideas">
-            <IconButton onClick={() => setSidebarOpen(true)} color="inherit" sx={{ mr: 1 }}>
-              <Badge variant="dot" color="error" overlap="circular" invisible={!hasAnyNewAnalysisData}>
-                <ListAltIcon />
-              </Badge>
-            </IconButton>
-          </MuiTooltip>
-          <IconButton onClick={toggleTheme} color="inherit" sx={{ mr: 2 }}>
-            {isDarkMode ? <Brightness7 /> : <Brightness4 />}
-          </IconButton>
+          </Box>
         </Toolbar>
       </AppBar>
-      <Drawer anchor="right" open={sidebarOpen} onClose={() => setSidebarOpen(false)}>
-        <Box sx={{ width: 500, height: '100%', display: 'flex' }}>
-          <SidebarNav items={sidebarNavItems} value={sidebarTab} onChange={(v) => setSidebarTab(v as SidebarTab)} />
-          <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2, width: 412 }}>
-            {sidebarTab === 'watchlist' && (
-              <>
-                <SkillTip>
-                  Add/remove symbols here directly, or just ask Claude to add one to the watchlist.
-                </SkillTip>
-                <WatchlistPanel
-                  watchlist={watchlist}
-                  activeSymbol={symbol}
-                  onSelectSymbol={handleSelectWatchlistSymbol}
-                  onAdd={handleAddWatchlistSymbol}
-                  onRemove={handleRemoveWatchlistSymbol}
-                />
-              </>
-            )}
-            {sidebarTab === 'strategy' && (
-              <>
-                <SkillTip>
-                  Edited by Claude directly when you discuss strategy changes in chat — no skill needed, just talk
-                  through the change.
-                </SkillTip>
-                <StrategyPanel strategyText={strategyText} loading={strategyLoading} error={strategyError} />
-              </>
-            )}
-            {sidebarTab === 'ideas' && (
-              <>
-                <SkillTip>
-                  Populated by the <code>find-trades</code> skill — ask Claude to "scan for trades" or run{' '}
-                  <code>/find-trades</code>.
-                </SkillTip>
-                <IdeasPanel ideas={tradeIdeas} lastUpdated={analysisDataUpdatedAt} />
-              </>
-            )}
-            {sidebarTab === 'levels' && (
-              <>
-                <SkillTip>
-                  Also written by <code>find-trades</code> — support/resistance levels get flagged even when no
-                  trade idea qualifies.
-                </SkillTip>
-                <LevelsPanel levels={levels} />
-              </>
-            )}
-            {sidebarTab === 'alerts' && (
-              <>
-                <SkillTip>
-                  Also written by <code>find-trades</code> — notable events like a new idea or price nearing a
-                  level. Enable the bell icon (top right) for real desktop notifications on new ones. Acknowledging
-                  one here doesn't need a skill.
-                </SkillTip>
-                <AlertsPanel alerts={alerts} onAcknowledge={handleAcknowledgeAlert} />
-              </>
-            )}
-            {sidebarTab === 'activity' && (
-              <>
-                <SkillTip>
-                  The run history of <code>find-trades</code> (and any future analysis skills) — including "no
-                  setup found" results, so you can see what actually ran.
-                </SkillTip>
-                <ActivityPanel entries={analysisLog} />
-              </>
-            )}
-            {sidebarTab === 'skills' && (
-              <>
-                <SkillTip>
-                  Documentation for every Claude skill available in this project, read straight from{' '}
-                  <code>.claude/skills/*/SKILL.md</code> — ask Claude to add or edit a skill and this updates
-                  itself.
-                </SkillTip>
-                <SkillsPanel skills={skills} />
-              </>
-            )}
-          </Box>
-        </Box>
-      </Drawer>
-      <Container 
-        maxWidth={false} 
-        sx={{ 
+      <Box sx={{ flexGrow: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
+      <Container
+        maxWidth={false}
+        sx={{
           flexGrow: 1,
+          minWidth: 0,
           p: 3,
-          height: 'calc(100vh - 64px)', // 64px is AppBar height
+          height: '100%',
           display: 'flex',
           flexDirection: 'column',
           gap: 2
@@ -854,17 +803,17 @@ const AppContent = () => {
             connection icon (top right) to retry.
           </Alert>
         )}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-          <Typography variant="h5">
-            Current Price for {symbol}:
+        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, mb: 1.5, flexWrap: 'wrap' }}>
+          <Typography variant="h4" sx={{ fontWeight: 700, letterSpacing: 0.5 }}>
+            {symbol}
           </Typography>
           {(connectionState === 'connecting' || currentPriceValue == null) ? (
             <Skeleton variant="text" width={100} sx={{ fontSize: '1.5rem' }} />
           ) : (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography 
-                variant="h5" 
-                sx={{ 
+            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
+              <Typography
+                variant="h5"
+                sx={{
                   fontWeight: 'bold',
                   color: isPriceUp(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown,
                   display: 'flex',
@@ -883,9 +832,9 @@ const AppContent = () => {
                         <ArrowDownIcon sx={{ color: CHART_COLORS.priceDown }} />
                       );
                     })()}
-                    <Typography 
-                      component="span" 
-                      sx={{ 
+                    <Typography
+                      component="span"
+                      sx={{
                         fontSize: '0.8em',
                         color: theme => {
                           const { delta } = calculateChanges(candles, timeFrame);
@@ -903,8 +852,28 @@ const AppContent = () => {
               </Typography>
             </Box>
           )}
+          {trade && (
+            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, ml: 'auto' }}>
+              <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75 }}>
+                <Typography variant="caption" color="text.secondary">Last</Typography>
+                <Typography variant="body2">{formatVolume(trade.volume)}</Typography>
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75 }}>
+                <Typography variant="caption" color="text.secondary">at</Typography>
+                <Typography variant="body2">
+                  {new Date(trade.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </Typography>
+              </Box>
+              {trade.conditions?.length > 0 && (
+                <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75 }}>
+                  <Typography variant="caption" color="text.secondary">Conditions</Typography>
+                  <Typography variant="body2">{trade.conditions.join(', ')}</Typography>
+                </Box>
+              )}
+            </Box>
+          )}
         </Box>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1.5, pb: 1.5, borderBottom: 1, borderColor: 'divider' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <ToggleButtonGroup
               value={chartMode}
@@ -1013,12 +982,27 @@ const AppContent = () => {
         <Box sx={{ flexGrow: 1, minHeight: '400px', display: 'flex', flexDirection: 'column', gap: 2 }}>
           <Box sx={{ flexGrow: 1, minHeight: '60%' }}>
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={getFilteredCandles(candles, timeFrame)}>
-                <CartesianGrid 
-                  strokeDasharray="3 3" 
-                  stroke="rgba(128, 128, 128, 0.2)" 
+              <ComposedChart
+                data={getFilteredCandles(candles, timeFrame)}
+                onMouseMove={(state: any) => {
+                  if (state?.chartY != null && priceScaleRef.current) {
+                    setCrosshairPrice(priceScaleRef.current.invert(state.chartY));
+                  }
+                }}
+                onMouseLeave={() => setCrosshairPrice(null)}
+              >
+                <Customized
+                  component={({ yAxisMap }: any) => {
+                    const axis = yAxisMap && (Object.values(yAxisMap)[0] as any);
+                    if (axis?.scale) priceScaleRef.current = axis.scale;
+                    return null;
+                  }}
                 />
-                <XAxis 
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="rgba(128, 128, 128, 0.2)"
+                />
+                <XAxis
                   dataKey="timestamp"
                   tickFormatter={formatXAxisTick}
                   domain={getXAxisDomain()}
@@ -1027,8 +1011,8 @@ const AppContent = () => {
                   interval={timeFrame === '1w' ? 24 : 'preserveStartEnd'}
                   minTickGap={50}
                 />
-                <YAxis 
-                  domain={['auto', 'auto']} 
+                <YAxis
+                  domain={['auto', 'auto']}
                   orientation="right"
                   tickFormatter={formatPrice}
                 />
@@ -1042,6 +1026,19 @@ const AppContent = () => {
                       value: formatPrice(currentPriceValue),
                       position: 'right',
                       fill: isCurrentCandleBullish(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown,
+                    }}
+                  />
+                )}
+                {crosshairPrice != null && (
+                  <ReferenceLine
+                    y={crosshairPrice}
+                    stroke="#9e9e9e"
+                    strokeDasharray="2 2"
+                    label={{
+                      value: formatPrice(crosshairPrice),
+                      position: 'right',
+                      fill: '#9e9e9e',
+                      fontSize: 11,
                     }}
                   />
                 )}
@@ -1263,67 +1260,105 @@ const AppContent = () => {
             </Box>
           )}
         </Box>
-        <TableContainer 
-          component={Paper} 
-          sx={{ 
-            maxHeight: 200,
-            backgroundColor: 'background.default',
-            '& .MuiTableCell-root': { borderColor: 'divider' }
-          }}
-        >
-          <Table size="small" stickyHeader>
-            <TableHead>
-              <TableRow>
-                <StyledTableCell>Time</StyledTableCell>
-                <StyledTableCell align="right">Open</StyledTableCell>
-                <StyledTableCell align="right">High</StyledTableCell>
-                <StyledTableCell align="right">Low</StyledTableCell>
-                <StyledTableCell align="right">Close</StyledTableCell>
-                <StyledTableCell align="right">Volume</StyledTableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {[...candles].reverse().map((candle) => (
-                <TableRow key={candle.timestamp}>
-                  <StyledTableCell>
-                    {new Date(candle.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </StyledTableCell>
-                  <StyledTableCell align="right">
-                    {formatPrice(candle.open)}
-                  </StyledTableCell>
-                  <StyledTableCell align="right">
-                    {formatPrice(candle.high)}
-                  </StyledTableCell>
-                  <StyledTableCell align="right">
-                    {formatPrice(candle.low)}
-                  </StyledTableCell>
-                  <StyledTableCell align="right">
-                    {formatPrice(candle.close)}
-                  </StyledTableCell>
-                  <StyledTableCell align="right">
-                    {formatVolume(candle.volume)}
-                  </StyledTableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {trade && (
-            <>
-              <Typography variant="body1">
-                Volume: {formatVolume(trade.volume)}
-              </Typography>
-              <Typography variant="body1">
-                Time: {new Date(trade.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </Typography>
-              <Typography variant="body1">
-                Conditions: {trade.conditions?.join(', ') || '—'}
-              </Typography>
-            </>
-          )}
-        </Box>
       </Container>
+      {sidebarOpen && (
+        <>
+          <Box
+            onMouseDown={handleSidebarResizeStart}
+            sx={{
+              width: 6,
+              flexShrink: 0,
+              cursor: 'col-resize',
+              bgcolor: 'divider',
+              '&:hover': { bgcolor: 'primary.main' },
+              transition: 'background-color 0.15s',
+            }}
+          />
+          <Box sx={{ width: sidebarWidth, flexShrink: 0, height: '100%', display: 'flex', bgcolor: 'background.paper' }}>
+            <SidebarNav items={sidebarNavItems} value={sidebarTab} onChange={(v) => setSidebarTab(v as SidebarTab)} />
+            <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <MuiTooltip title="Close panel">
+                  <IconButton size="small" onClick={() => setSidebarOpen(false)}>
+                    <CloseIcon fontSize="small" />
+                  </IconButton>
+                </MuiTooltip>
+              </Box>
+              {sidebarTab === 'watchlist' && (
+                <>
+                  <SkillTip>
+                    Add/remove symbols here directly, or just ask Claude to add one to the watchlist.
+                  </SkillTip>
+                  <WatchlistPanel
+                    watchlist={watchlist}
+                    activeSymbol={symbol}
+                    onSelectSymbol={handleSelectWatchlistSymbol}
+                    onAdd={handleAddWatchlistSymbol}
+                    onRemove={handleRemoveWatchlistSymbol}
+                  />
+                </>
+              )}
+              {sidebarTab === 'strategy' && (
+                <>
+                  <SkillTip>
+                    Edited by Claude directly when you discuss strategy changes in chat — no skill needed, just talk
+                    through the change.
+                  </SkillTip>
+                  <StrategyPanel strategyText={strategyText} loading={strategyLoading} error={strategyError} />
+                </>
+              )}
+              {sidebarTab === 'ideas' && (
+                <>
+                  <SkillTip>
+                    Populated by the <code>find-trades</code> skill — ask Claude to "scan for trades" or run{' '}
+                    <code>/find-trades</code>.
+                  </SkillTip>
+                  <IdeasPanel ideas={tradeIdeas} lastUpdated={analysisDataUpdatedAt} />
+                </>
+              )}
+              {sidebarTab === 'levels' && (
+                <>
+                  <SkillTip>
+                    Also written by <code>find-trades</code> — support/resistance levels get flagged even when no
+                    trade idea qualifies.
+                  </SkillTip>
+                  <LevelsPanel levels={levels} />
+                </>
+              )}
+              {sidebarTab === 'alerts' && (
+                <>
+                  <SkillTip>
+                    Also written by <code>find-trades</code> — notable events like a new idea or price nearing a
+                    level. Enable the bell icon (top right) for real desktop notifications on new ones. Acknowledging
+                    one here doesn't need a skill.
+                  </SkillTip>
+                  <AlertsPanel alerts={alerts} onAcknowledge={handleAcknowledgeAlert} />
+                </>
+              )}
+              {sidebarTab === 'activity' && (
+                <>
+                  <SkillTip>
+                    The run history of <code>find-trades</code> (and any future analysis skills) — including "no
+                    setup found" results, so you can see what actually ran.
+                  </SkillTip>
+                  <ActivityPanel entries={analysisLog} />
+                </>
+              )}
+              {sidebarTab === 'skills' && (
+                <>
+                  <SkillTip>
+                    Documentation for every Claude skill available in this project, read straight from{' '}
+                    <code>.claude/skills/*/SKILL.md</code> — ask Claude to add or edit a skill and this updates
+                    itself.
+                  </SkillTip>
+                  <SkillsPanel skills={skills} />
+                </>
+              )}
+            </Box>
+          </Box>
+        </>
+      )}
+      </Box>
       <Snackbar
         open={snackbar.open}
         autoHideDuration={6000}
