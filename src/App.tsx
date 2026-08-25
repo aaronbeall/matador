@@ -26,6 +26,7 @@ import {
   Tabs,
   Tab,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import {
   Brightness4,
   Brightness7,
@@ -1130,7 +1131,19 @@ const AppContent = () => {
 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <AppBar position="static">
+      <AppBar
+        position="static"
+        sx={{
+          // Reproduce MuiAppBar's own default light/dark behavior
+          // (`enableColorOnDark` defaults to false, so dark mode normally
+          // uses background.paper instead of primary.main) — an explicit
+          // sx.bgcolor bypasses that built-in switch entirely, which is
+          // what was turning the dark-mode header solid green.
+          bgcolor: (theme) =>
+            alpha(theme.palette.mode === 'dark' ? theme.palette.background.paper : theme.palette.primary.main, 0.85),
+          backdropFilter: 'blur(6px)',
+        }}
+      >
         <Toolbar>
           <Logo 
             sx={{ 
@@ -1956,7 +1969,17 @@ const AppContent = () => {
               transition: 'background-color 0.15s',
             }}
           />
-          <Box sx={{ width: sidebarWidth, flexShrink: 0, height: '100%', display: 'flex', bgcolor: 'background.paper', position: 'relative' }}>
+          <Box
+            sx={{
+              width: sidebarWidth,
+              flexShrink: 0,
+              height: '100%',
+              display: 'flex',
+              bgcolor: (theme) => alpha(theme.palette.background.paper, 0.85),
+              backdropFilter: 'blur(6px)',
+              position: 'relative',
+            }}
+          >
             <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
               <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <MuiTooltip title="Collapse panel">

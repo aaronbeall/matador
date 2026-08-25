@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography } from '@mui/material';
+import { Box, Typography, Tooltip } from '@mui/material';
 import { getMarketSession, getEtClockLabel, MarketSession } from '../utils/marketHours';
 
 const SESSION_EMOJI: Record<MarketSession, string> = {
@@ -16,19 +16,21 @@ const SESSION_LABEL: Record<MarketSession, string> = {
   afterhours: 'After Hours',
 };
 
-// A day/night "lighting" gradient per stage — night-navy for closed,
-// dawn for pre-market, bright sky for the open session, sunset for
-// after-hours — so the stage reads at a glance from color alone, the
-// emoji and label are just confirmation, not the only signal.
-const SESSION_GRADIENT: Record<MarketSession, string> = {
-  closed: 'linear-gradient(90deg, #0d1321, #1b2a4a)',
-  premarket: 'linear-gradient(90deg, #2b2d5e, #ff8a65)',
-  open: 'linear-gradient(90deg, #4fc3f7, #fff59d)',
-  afterhours: 'linear-gradient(90deg, #ff7043, #4a148c)',
+// The single dominant hue "emanating" from the indicator for each stage —
+// night-navy for closed, dawn orange for pre-market, bright daylight blue
+// for the open session, sunset orange-purple for after-hours. Doubles as
+// both the background glow's core color and the pill's own translucent
+// tint, so the pill reads as the actual light source, not just a label
+// sitting on top of it.
+const SESSION_GLOW: Record<MarketSession, string> = {
+  closed: '#1b2a6b',
+  premarket: '#ff8a65',
+  open: '#4fc3f7',
+  afterhours: '#ff7043',
 };
 
-// Light backgrounds (open) read better with dark text; the rest are dark
-// enough for white text throughout the gradient.
+// Light pill fills (open) read better with dark text; the rest are dark
+// enough for white text even at low opacity.
 const SESSION_TEXT_COLOR: Record<MarketSession, string> = {
   closed: '#fff',
   premarket: '#fff',
@@ -36,52 +38,110 @@ const SESSION_TEXT_COLOR: Record<MarketSession, string> = {
   afterhours: '#fff',
 };
 
-// Small centered pill under the app header — which of the four discrete
-// trading-day stages "now" is in, in real ET wall-clock time regardless
-// of the browser's own timezone (see utils/marketHours). Purely
-// informational context for reading the chart (e.g. thin premarket/
-// after-hours volume vs. a live regular session) — not tied to any
-// symbol or data fetch, just the clock.
+// Cycling order for the click-to-preview testing affordance below.
+const SESSION_CYCLE: MarketSession[] = ['closed', 'premarket', 'open', 'afterhours'];
+
+// A large, soft, fixed radial glow behind the entire app, centered where
+// the indicator sits (top-center) — the actual "day/night lighting
+// effect," rather than confined to the indicator's own small shape. Sits
+// behind normal page content (negative z-index on a `position: fixed`
+// layer paints behind the default stacking layer normal content occupies)
+// and shows through wherever the header/panels are translucent (see
+// their own `alpha(...)` backgrounds in App.tsx) rather than being fully
+// hidden behind them.
+const GlowBackground = ({ session }: { session: MarketSession }) => (
+  <Box
+    sx={{
+      position: 'fixed',
+      inset: 0,
+      zIndex: -1,
+      pointerEvents: 'none',
+      transition: 'background 1s ease',
+      background: `radial-gradient(ellipse 70% 60% at 50% 0%, ${SESSION_GLOW[session]}55 0%, transparent 70%)`,
+    }}
+  />
+);
+
+// Which of the four discrete trading-day stages "now" is in, in real ET
+// wall-clock time independent of the browser's own timezone (see
+// utils/marketHours). Rendered as a translucent pill that floats straddling
+// the app header's bottom edge — the wrapper itself takes up zero layout
+// height (`position: relative; height: 0`), so the header and side panel
+// still butt directly against each other; the pill is purely an absolutely
+// positioned overlay on top, not a layout row anything else has to make
+// room for. Clicking it cycles through all four stages for testing/preview
+// purposes, then back to the real live reading — see `override` below.
 export const MarketHoursIndicator: React.FC = () => {
   const [now, setNow] = useState(() => Date.now());
+  // null = following the real clock; a value = previewing that stage
+  // instead, for testing what each looks like without waiting for it.
+  const [override, setOverride] = useState<MarketSession | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(interval);
   }, []);
 
-  const session = getMarketSession(now);
+  const liveSession = getMarketSession(now);
+  const session = override ?? liveSession;
+
+  const handleClick = () => {
+    const currentIndex = override ? SESSION_CYCLE.indexOf(override) : -1;
+    const nextIndex = currentIndex + 1;
+    setOverride(nextIndex >= SESSION_CYCLE.length ? null : SESSION_CYCLE[nextIndex]);
+  };
 
   return (
-    <Box sx={{ display: 'flex', justifyContent: 'center', py: 0.5 }}>
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.75,
-          px: 1.5,
-          py: 0.4,
-          borderRadius: 5,
-          background: SESSION_GRADIENT[session],
-          boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
-        }}
-      >
-        <Typography component="span" sx={{ fontSize: '0.95rem', lineHeight: 1 }}>
-          {SESSION_EMOJI[session]}
-        </Typography>
-        <Typography
-          variant="caption"
-          sx={{ fontWeight: 700, color: SESSION_TEXT_COLOR[session], letterSpacing: 0.3 }}
-        >
-          {SESSION_LABEL[session]}
-        </Typography>
-        <Typography
-          variant="caption"
-          sx={{ color: SESSION_TEXT_COLOR[session], opacity: 0.8 }}
-        >
-          · {getEtClockLabel(now)}
-        </Typography>
+    <>
+      <GlowBackground session={session} />
+      <Box sx={{ position: 'relative', height: 0 }}>
+        <Tooltip title="Click to preview each session stage (testing)">
+          <Box
+            onClick={handleClick}
+            sx={{
+              position: 'absolute',
+              top: -16,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: (theme) => theme.zIndex.appBar + 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.75,
+              px: 1.5,
+              py: 0.4,
+              borderRadius: 5,
+              bgcolor: `${SESSION_GLOW[session]}40`,
+              backdropFilter: 'blur(8px)',
+              border: '1px solid rgba(255,255,255,0.18)',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.35)',
+              cursor: 'pointer',
+              userSelect: 'none',
+            }}
+          >
+            <Typography component="span" sx={{ fontSize: '0.95rem', lineHeight: 1 }}>
+              {SESSION_EMOJI[session]}
+            </Typography>
+            <Typography
+              variant="caption"
+              sx={{ fontWeight: 700, color: SESSION_TEXT_COLOR[session], letterSpacing: 0.3 }}
+            >
+              {SESSION_LABEL[session]}
+            </Typography>
+            <Typography variant="caption" sx={{ color: SESSION_TEXT_COLOR[session], opacity: 0.85 }}>
+              · {getEtClockLabel(now)}
+            </Typography>
+            {override && (
+              <Typography
+                variant="caption"
+                fontStyle="italic"
+                sx={{ color: SESSION_TEXT_COLOR[session], opacity: 0.7 }}
+              >
+                (preview)
+              </Typography>
+            )}
+          </Box>
+        </Tooltip>
       </Box>
-    </Box>
+    </>
   );
 };
