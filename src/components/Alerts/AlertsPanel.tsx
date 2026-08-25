@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Typography, Chip, ButtonBase, Tooltip, Collapse, Divider } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -142,14 +142,18 @@ const biasAccentColor: Record<Direction, string> = {
 
 // Shared by the legend and the real alert rows — one definition, so they
 // can't drift apart the way describing the styling in prose would risk.
-const StatusChip = ({ status }: { status: AlertStatus }) => {
+// `dimmed` (real alert rows only, never the legend) flattens the chip to
+// plain gray regardless of status — otherwise a stale `triggered` chip
+// keeps its bright info-blue fill even on a faded card, and reads as
+// "this is happening now" at a glance when it isn't.
+const StatusChip = ({ status, dimmed }: { status: AlertStatus; dimmed?: boolean }) => {
   const Icon = STATUS_ICON[status];
   return (
     <Chip
       icon={<Icon fontSize="small" />}
       label={statusLabel[status]}
       size="small"
-      color={statusColor[status]}
+      color={dimmed ? 'default' : statusColor[status]}
       variant="filled"
     />
   );
@@ -191,6 +195,28 @@ const actionLabel: Record<AlertAction, string> = {
   exit: 'Exit Position',
   watch: 'Watch Only',
 };
+
+// A window's two endpoints — deliberately NOT formatTimestamp (which
+// omits the date whenever a timestamp falls on *today*, relative to now).
+// That's the wrong reference point for a range: what matters for a
+// window is whether its OWN two ends fall on the same day as each OTHER,
+// not whether either happens to be today. A same-day window ("10:00 AM →
+// 4:15 PM") doesn't need dates at all; a window starting yesterday and
+// ending today needs the date on *both* ends ("Aug 24, 4:11 PM → Aug 25,
+// 4:15 PM") — showing it on only the non-today end (what formatTimestamp
+// would do) makes the dated one look like the odd one out, i.e. like the
+// whole window belongs to that earlier day and has already closed.
+function formatWindow(startIso: string, endIso: string): string {
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  const spansDays = start.toDateString() !== end.toDateString();
+  const bound = (d: Date) => {
+    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (!spansDays) return time;
+    return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${time}`;
+  };
+  return `${bound(start)} → ${bound(end)}`;
+}
 
 // One readable line for the raw technical trigger — the "way to see the
 // technical conditions" ask, kept separate from headline/rationale/
@@ -366,9 +392,32 @@ const AlertsLegend = () => (
 
 export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts }) => {
   // Tracks which alert BODIES are collapsed — inverted (collapsed, not
-  // open) so a newly-arrived alert defaults to open without needing to be
-  // added to this set first.
+  // open) so a live alert defaults open and an inactive one defaults
+  // collapsed. Deliberately NOT a one-time useState initializer keyed off
+  // the first `alerts` prop — this panel (like the rest of the app) can
+  // render before the initial fetch resolves, so that first render is
+  // `alerts === []`, which would permanently seed an empty "nothing's
+  // collapsed" set and default every card open forever, live or not, no
+  // matter what arrives afterward. Instead: track which ids we've already
+  // assigned a default for (a ref, not state — it shouldn't itself cause
+  // a re-render), and every time `alerts` changes, assign a default only
+  // to ids we haven't seen yet — covering both "alerts finally loaded"
+  // and "a genuinely new alert just arrived" the same way, while leaving
+  // anything the user has already toggled alone.
+  const seenIds = useRef<Set<string>>(new Set());
   const [collapsedBodies, setCollapsedBodies] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const unseen = alerts.filter((a) => !seenIds.current.has(a.id));
+    if (unseen.length === 0) return;
+    unseen.forEach((a) => seenIds.current.add(a.id));
+    const toCollapse = unseen.filter((a) => !isAlertLive(a)).map((a) => a.id);
+    if (toCollapse.length === 0) return;
+    setCollapsedBodies((prev) => {
+      const next = new Set(prev);
+      toCollapse.forEach((id) => next.add(id));
+      return next;
+    });
+  }, [alerts]);
   const [legendOpen, setLegendOpen] = useState(false);
 
   const legend = (
@@ -416,13 +465,11 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts }) => {
 
   const renderAlert = (alert: Alert) => {
     // Faded = no longer live: nothing here is actively notifying you
-    // anymore. That's every resolved status (invalidated/expired/
-    // superseded) — and also a `triggered` alert whose own `expiresAt`
-    // has quietly passed (the engine never revisits an already-triggered
-    // alert, so this has to be checked here, live, off the clock, or a
-    // week-old trigger would render exactly like a fresh one forever).
-    // Only a genuinely current `pending` or `triggered` alert stays bright.
-    const dimmed = alert.status !== 'pending' && !isAlertLive(alert);
+    // anymore. isAlertLive is the single definition of "active" shared
+    // with the Alerts badge count, so the two can't disagree the way they
+    // used to (a `pending` alert past its own window used to render
+    // exactly like a fresh one forever — see isAlertLive's doc comment).
+    const dimmed = !isAlertLive(alert);
     const bodyOpen = !collapsedBodies.has(alert.id);
     // A prominent banner only once it's actually triggered and there's a
     // real action to take — a pending "watch only" alert gets a quieter
@@ -434,7 +481,7 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts }) => {
         key={alert.id}
         sx={{
           position: 'relative',
-          opacity: dimmed ? 0.55 : 1,
+          opacity: dimmed ? 0.45 : 1,
           bgcolor: 'action.hover',
           border: '1px solid',
           borderColor: 'divider',
@@ -471,25 +518,25 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts }) => {
         </Typography>
 
         {/* Tier 3: secondary classification — demoted below the headline so
-            it reads as supporting context, not competing with it. */}
+            it reads as supporting context, not competing with it. The
+            expand/collapse control trails at the end of this same row
+            (flexGrow spacer before it) rather than sitting alone on its
+            own orphaned line below — same "controls trail a badge row"
+            convention used elsewhere (e.g. Journal's "⋮" menu). */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: 0.5 }}>
-          <StatusChip status={alert.status} />
+          <StatusChip status={alert.status} dimmed={dimmed} />
           <BiasChip bias={alert.bias} />
           <TimeframeChip timeframe={alert.condition.timeframe} />
+          <Box sx={{ flexGrow: 1 }} />
+          <Tooltip title={bodyOpen ? 'Hide details' : 'Show details'}>
+            <ButtonBase
+              onClick={() => toggleBody(alert.id)}
+              sx={{ display: 'flex', alignItems: 'center', p: 0.25, borderRadius: '50%', color: 'text.secondary' }}
+            >
+              {bodyOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+            </ButtonBase>
+          </Tooltip>
         </Box>
-
-        {/* Expand/collapse lives below the header area (title + badges),
-            not folded into it — a plain text link, not an icon button, so
-            it doesn't compete with the chips above for attention. */}
-        <ButtonBase
-          onClick={() => toggleBody(alert.id)}
-          sx={{ display: 'flex', alignItems: 'center', gap: 0.25, mt: 0.5, color: 'info.main' }}
-        >
-          <Typography variant="caption" sx={{ fontWeight: 600 }}>
-            {bodyOpen ? 'Hide details' : 'Show details'}
-          </Typography>
-          {bodyOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
-        </ButtonBase>
 
         <Collapse in={bodyOpen}>
         {showActionBanner && (
@@ -579,7 +626,7 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts }) => {
           >
             {formatCondition(alert.condition)}
             {alert.invalidation && `\ninvalidated if: ${formatCondition(alert.invalidation)}`}
-            {`\nwindow: ${alert.activeFrom ? formatTimestamp(alert.activeFrom) : formatTimestamp(alert.createdAt)} → ${formatTimestamp(alert.expiresAt)}`}
+            {`\nwindow: ${formatWindow(alert.activeFrom ?? alert.createdAt, alert.expiresAt)}`}
           </Typography>
         </Box>
         </Collapse>
