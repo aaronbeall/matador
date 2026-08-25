@@ -71,6 +71,7 @@ import { PatternMarkerShape, PatternMarkerPoint } from './components/PatternMark
 import { PatternBadges } from './components/PatternBadges';
 import { PatternTooltip } from './components/PatternTooltip';
 import { getPatternColor } from './components/PatternVisuals';
+import { PatternIllustration, PATTERN_ILLUSTRATIONS } from './components/PatternIllustration';
 import { computeAutoLevels } from './utils/autoLevels';
 import { CHART_COLORS } from './constants/colors';
 import { PATTERN_INFO, PatternStrength } from './constants/patterns';
@@ -134,6 +135,8 @@ const SIDEBAR_MIN_WIDTH = 320;
 const SIDEBAR_MAX_WIDTH = 720;
 const INDICATORS_STORAGE_KEY = 'matador-indicators';
 const PATTERNS_STORAGE_KEY = 'matador-patterns';
+const INDICATORS_VISIBLE_STORAGE_KEY = 'matador-indicators-visible';
+const PATTERNS_VISIBLE_STORAGE_KEY = 'matador-patterns-visible';
 
 // Remaining UI-state persistence keys — same read-once-with-validation,
 // write-on-change pattern as sidebarWidth/indicators/enabledPatterns
@@ -265,6 +268,33 @@ const AppContent = () => {
       prev.includes(patternKey) ? prev.filter((p) => p !== patternKey) : [...prev, patternKey]
     );
   };
+
+  // A wholesale mute per category, layered on top of the actual
+  // indicator/pattern selection rather than touching it — flipping this
+  // off hides everything in that category from the chart without losing
+  // which specific ones you'd chosen, so switching it back on restores
+  // exactly what you had. Quick way to isolate one category or mute the
+  // other for a bit.
+  const [indicatorsVisible, setIndicatorsVisible] = useState(() => {
+    const stored = localStorage.getItem(INDICATORS_VISIBLE_STORAGE_KEY);
+    return stored === null ? true : stored === 'true';
+  });
+  useEffect(() => {
+    localStorage.setItem(INDICATORS_VISIBLE_STORAGE_KEY, String(indicatorsVisible));
+  }, [indicatorsVisible]);
+  const [patternsVisible, setPatternsVisible] = useState(() => {
+    const stored = localStorage.getItem(PATTERNS_VISIBLE_STORAGE_KEY);
+    return stored === null ? true : stored === 'true';
+  });
+  useEffect(() => {
+    localStorage.setItem(PATTERNS_VISIBLE_STORAGE_KEY, String(patternsVisible));
+  }, [patternsVisible]);
+  // What the chart actually renders — the real selection, filtered
+  // through the mute switch. Keep `indicators`/`enabledPatterns`
+  // themselves untouched everywhere else (checkboxes, counts) so they
+  // always reflect the real configuration.
+  const visibleIndicators = indicatorsVisible ? indicators : [];
+  const visiblePatterns = patternsVisible ? enabledPatterns : [];
 
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
   const [menuTab, setMenuTab] = useState<'indicators' | 'patterns'>('indicators');
@@ -908,9 +938,9 @@ const AppContent = () => {
   // panels above it keep their gridlines (for alignment) but not the
   // labels, so three stacked charts don't each print their own row of
   // (redundant, slightly misaligned) timestamps.
-  const bottomPanel: 'main' | 'macd' | 'rsi' = indicators.includes('rsi')
+  const bottomPanel: 'main' | 'macd' | 'rsi' = visibleIndicators.includes('rsi')
     ? 'rsi'
-    : indicators.includes('macd')
+    : visibleIndicators.includes('macd')
       ? 'macd'
       : 'main';
 
@@ -943,7 +973,7 @@ const AppContent = () => {
 
   const MAIN_OVERLAY_INDICATORS: Indicator[] = ['vwap', 'ema9', 'ema21', 'sma20', 'sma50', 'sma200'];
   const mainIndicatorItems: IndicatorLegendItem[] = displayCandle
-    ? MAIN_OVERLAY_INDICATORS.filter((id) => indicators.includes(id)).map((id) => ({
+    ? MAIN_OVERLAY_INDICATORS.filter((id) => visibleIndicators.includes(id)).map((id) => ({
         key: id,
         label: INDICATOR_DEFS[id].name,
         value: displayCandle[id] != null ? INDICATOR_DEFS[id].format(displayCandle[id]!) : '—',
@@ -973,14 +1003,14 @@ const AppContent = () => {
   // latest candle happens to be is noise more often than not (doji is by
   // far the most common pattern), so this only shows on a deliberate hover,
   // matching the marker's own tooltip behavior exactly.
-  const displayPatterns: string[] = (hoveredCandle?.patterns ?? []).filter((p) => enabledPatterns.includes(p));
+  const displayPatterns: string[] = (hoveredCandle?.patterns ?? []).filter((p) => visiblePatterns.includes(p));
 
   // One marker per candle carrying an enabled pattern, positioned above
   // the high for a bearish read, below the low for bullish, at the
   // midpoint for neutral/mixed — see PatternMarker.tsx for the shape,
   // PatternTooltip.tsx for the hover detail.
   const patternMarkers: PatternMarkerPoint[] = filteredCandles
-    .map((c) => ({ ...c, patterns: (c.patterns ?? []).filter((p) => enabledPatterns.includes(p)) }))
+    .map((c) => ({ ...c, patterns: (c.patterns ?? []).filter((p) => visiblePatterns.includes(p)) }))
     .filter((c) => c.patterns.length > 0)
     .map((c) => {
       const dirs = c.patterns.map((p) => PATTERN_INFO[p]?.direction ?? 'neutral');
@@ -1295,12 +1325,47 @@ const AppContent = () => {
               variant="fullWidth"
               sx={{ minHeight: 32, position: 'sticky', top: 0, bgcolor: 'background.paper', zIndex: 1, '& .MuiTab-root': { minHeight: 32, py: 0, fontSize: '0.7rem' } }}
             >
-              <Tab value="indicators" label="Indicators" />
-              <Tab value="patterns" label="Patterns" />
+              <Tab value="indicators" label={`Indicators (${indicators.length})`} />
+              <Tab value="patterns" label={`Patterns (${enabledPatterns.length})`} />
             </Tabs>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                px: 1,
+                py: 0.25,
+                borderBottom: '1px solid',
+                borderColor: 'divider',
+              }}
+            >
+              <Typography variant="caption" color="text.secondary">
+                Show on chart
+              </Typography>
+              <Switch
+                size="small"
+                checked={menuTab === 'indicators' ? indicatorsVisible : patternsVisible}
+                onChange={() =>
+                  menuTab === 'indicators'
+                    ? setIndicatorsVisible((v) => !v)
+                    : setPatternsVisible((v) => !v)
+                }
+              />
+            </Box>
             {menuTab === 'indicators' &&
               Object.values(INDICATOR_DEFS).map(indicator => (
-                <MuiTooltip key={indicator.id} title={indicator.description} placement="right" arrow>
+                <MuiTooltip
+                  key={indicator.id}
+                  placement="right"
+                  arrow
+                  title={
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5, maxWidth: 240 }}>
+                      <Typography variant="caption" sx={{ fontWeight: 700 }}>{indicator.name}</Typography>
+                      <Typography variant="caption" color="text.secondary">{indicator.description}</Typography>
+                      <Typography variant="caption" sx={{ fontStyle: 'italic' }}>{indicator.why}</Typography>
+                    </Box>
+                  }
+                >
                   <MenuItem sx={{ minHeight: 26, py: 0.25, px: 1 }} onClick={() => handleIndicatorChange(indicator.id)}>
                     <Checkbox
                       size="small"
@@ -1317,7 +1382,23 @@ const AppContent = () => {
               ))}
             {menuTab === 'patterns' &&
               Object.entries(PATTERN_INFO).map(([key, info]) => (
-                <MuiTooltip key={key} title={info.meaning} placement="right" arrow>
+                <MuiTooltip
+                  key={key}
+                  placement="right"
+                  arrow
+                  title={
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5, maxWidth: 240 }}>
+                      {PATTERN_ILLUSTRATIONS[key] && (
+                        <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                          <PatternIllustration candles={PATTERN_ILLUSTRATIONS[key]} />
+                        </Box>
+                      )}
+                      <Typography variant="caption" sx={{ fontWeight: 700 }}>{info.label}</Typography>
+                      <Typography variant="caption" color="text.secondary">{info.description}</Typography>
+                      <Typography variant="caption" sx={{ fontStyle: 'italic' }}>{info.why}</Typography>
+                    </Box>
+                  }
+                >
                   <MenuItem sx={{ minHeight: 26, py: 0.25, px: 1 }} onClick={() => handlePatternToggle(key)}>
                     <Checkbox
                       size="small"
@@ -1506,7 +1587,7 @@ const AppContent = () => {
                     />
                   </>
                 )}
-                {indicators.includes('vwap') && (
+                {visibleIndicators.includes('vwap') && (
                   <Line
                     key="vwap"
                     type="monotone"
@@ -1518,7 +1599,7 @@ const AppContent = () => {
                     isAnimationActive={false}
                   />
                 )}
-                {indicators.includes('vwapBands') && (
+                {visibleIndicators.includes('vwapBands') && (
                   <>
                     <Line
                       key="vwapUpper1"
@@ -1566,7 +1647,7 @@ const AppContent = () => {
                     />
                   </>
                 )}
-                {indicators.includes('ema9') && (
+                {visibleIndicators.includes('ema9') && (
                   <Line
                     key="ema9"
                     type="monotone"
@@ -1578,7 +1659,7 @@ const AppContent = () => {
                     isAnimationActive={false}
                   />
                 )}
-                {indicators.includes('ema21') && (
+                {visibleIndicators.includes('ema21') && (
                   <Line
                     key="ema21"
                     type="monotone"
@@ -1590,7 +1671,7 @@ const AppContent = () => {
                     isAnimationActive={false}
                   />
                 )}
-                {indicators.includes('sma20') && (
+                {visibleIndicators.includes('sma20') && (
                   <Line
                     key="sma20"
                     type="monotone"
@@ -1602,7 +1683,7 @@ const AppContent = () => {
                     isAnimationActive={false}
                   />
                 )}
-                {indicators.includes('sma50') && (
+                {visibleIndicators.includes('sma50') && (
                   <Line
                     key="sma50"
                     type="monotone"
@@ -1614,7 +1695,7 @@ const AppContent = () => {
                     isAnimationActive={false}
                   />
                 )}
-                {indicators.includes('sma200') && (
+                {visibleIndicators.includes('sma200') && (
                   <Line
                     key="sma200"
                     type="monotone"
@@ -1649,7 +1730,7 @@ const AppContent = () => {
             />
           )}
 
-          {indicators.includes('macd') && (
+          {visibleIndicators.includes('macd') && (
             <Box sx={{ height: '20%', position: 'relative' }}>
               {displayCandle && (
                 <Box sx={{ position: 'absolute', top: 4, left: 8, zIndex: 2 }}>
@@ -1706,7 +1787,7 @@ const AppContent = () => {
             </Box>
           )}
           
-          {indicators.includes('rsi') && (
+          {visibleIndicators.includes('rsi') && (
             <Box sx={{ height: '20%', position: 'relative' }}>
               {displayCandle && (
                 <Box sx={{ position: 'absolute', top: 4, left: 8, zIndex: 2 }}>

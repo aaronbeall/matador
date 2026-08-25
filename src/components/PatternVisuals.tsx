@@ -72,7 +72,7 @@ export const PatternDetail = ({ patternKey }: { patternKey: string }) => {
         <StrengthMeter strength={info.strength} color={baseColor} />
       </Box>
       <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', lineHeight: 1.35 }}>
-        {info.meaning}
+        {info.description} {info.why}
       </Typography>
     </Box>
   );
