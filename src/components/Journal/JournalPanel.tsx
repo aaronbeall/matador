@@ -26,11 +26,12 @@ import {
   Add as AddIcon,
   Edit as EditIcon,
   DeleteOutline as DeleteIcon,
+  MoreVert as MoreIcon,
 } from '@mui/icons-material';
 import { JournalEntry, JournalEntryKind, ReviewVerdict, ReviewSourceType } from '../../types/Journal';
 import { formatTimestamp } from '../../utils/formatters';
 import { SymbolBadge } from '../SymbolBadge';
-import { groupEntriesByDate, TimelineDateHeader, TimelineRow } from '../Timeline';
+import { groupEntriesByDate, TimelineDateHeader, TimelineRow, TimelineTime } from '../Timeline';
 
 interface JournalPanelProps {
   journal: JournalEntry[];
@@ -153,96 +154,81 @@ const JournalScoreboard = ({ entries }: { entries: JournalEntry[] }) => {
   );
 };
 
-const EntryMeta = ({ entry }: { entry: JournalEntry }) => (
-  <Typography variant="caption" color="text.secondary">
-    {formatTimestamp(entry.timestamp)}
-  </Typography>
-);
-
-// Shared trailing edit/delete controls — appended to the end of a card's
-// header row (flexGrow spacer before them), same "controls live inline at
-// the end of the row" convention as Alerts' collapse chevron, rather than
-// absolutely-positioned icons that risk overlapping card content. Delete
-// confirms via a small anchored menu (same MUI Menu already used for the
-// chart settings dropdown elsewhere) rather than deleting on the first
-// click — a journal entry can't be recovered once it's gone.
+// A single "⋮" overflow menu carrying edit/delete — sits at the far
+// upper-right of a row, in line with its date/time, rather than trailing
+// inline inside the card's own header. Delete confirms by swapping the
+// same open menu into a confirm view instead of a second popup — a
+// journal entry can't be recovered once it's gone.
 const EntryControls = ({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) => {
-  const [confirmAnchor, setConfirmAnchor] = useState<HTMLElement | null>(null);
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const close = () => {
+    setAnchor(null);
+    setConfirming(false);
+  };
   return (
     <>
-      <Box sx={{ flexGrow: 1 }} />
-      <Tooltip title="Edit">
-        <IconButton size="small" onClick={onEdit} sx={{ p: 0.25 }}>
-          <EditIcon fontSize="small" />
-        </IconButton>
-      </Tooltip>
-      <Tooltip title="Delete">
-        <IconButton size="small" onClick={(e) => setConfirmAnchor(e.currentTarget)} sx={{ p: 0.25 }}>
-          <DeleteIcon fontSize="small" />
-        </IconButton>
-      </Tooltip>
+      <IconButton size="small" onClick={(e) => setAnchor(e.currentTarget)} sx={{ p: 0.25 }}>
+        <MoreIcon fontSize="small" />
+      </IconButton>
       <Menu
-        anchorEl={confirmAnchor}
-        open={!!confirmAnchor}
-        onClose={() => setConfirmAnchor(null)}
+        anchorEl={anchor}
+        open={!!anchor}
+        onClose={close}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
       >
-        <Box sx={{ px: 1.5, py: 1, display: 'flex', flexDirection: 'column', gap: 1, maxWidth: 220 }}>
-          <Typography variant="body2">Delete this entry?</Typography>
-          <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
-            <Button size="small" onClick={() => setConfirmAnchor(null)}>Cancel</Button>
-            <Button
-              size="small"
-              color="error"
-              variant="contained"
-              onClick={() => {
-                setConfirmAnchor(null);
-                onDelete();
-              }}
-            >
-              Delete
-            </Button>
+        {confirming ? (
+          <Box sx={{ px: 1.5, py: 1, display: 'flex', flexDirection: 'column', gap: 1, maxWidth: 220 }}>
+            <Typography variant="body2">Delete this entry?</Typography>
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
+              <Button size="small" onClick={close}>Cancel</Button>
+              <Button
+                size="small"
+                color="error"
+                variant="contained"
+                onClick={() => {
+                  close();
+                  onDelete();
+                }}
+              >
+                Delete
+              </Button>
+            </Box>
           </Box>
-        </Box>
+        ) : [
+          <MenuItem
+            key="edit"
+            onClick={() => {
+              close();
+              onEdit();
+            }}
+          >
+            <EditIcon fontSize="small" sx={{ mr: 1 }} /> Edit
+          </MenuItem>,
+          <MenuItem key="delete" onClick={() => setConfirming(true)}>
+            <DeleteIcon fontSize="small" sx={{ mr: 1 }} /> Delete
+          </MenuItem>,
+        ]}
       </Menu>
     </>
   );
 };
 
-const NoteEntryCard = ({
-  entry,
-  onEdit,
-  onDelete,
-}: {
-  entry: Extract<JournalEntry, { kind: 'note' }>;
-  onEdit: () => void;
-  onDelete: () => void;
-}) => (
+const NoteEntryCard = ({ entry }: { entry: Extract<JournalEntry, { kind: 'note' }> }) => (
   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-      <NoteIcon fontSize="small" color="action" />
       <Typography variant="caption" sx={{ fontWeight: 600 }}>
         {entry.author === 'user' ? 'You' : 'Claude'}
       </Typography>
       {entry.symbol && <SymbolBadge symbol={entry.symbol} size="small" />}
       {entry.sentiment != null && <SentimentMeter value={entry.sentiment} />}
-      <EntryMeta entry={entry} />
-      <EntryControls onEdit={onEdit} onDelete={onDelete} />
     </Box>
     <Typography variant="body2" sx={{ lineHeight: 1.5 }}>{entry.text}</Typography>
   </Box>
 );
 
-const ReviewEntryCard = ({
-  entry,
-  onEdit,
-  onDelete,
-}: {
-  entry: Extract<JournalEntry, { kind: 'review' }>;
-  onEdit: () => void;
-  onDelete: () => void;
-}) => {
+const ReviewEntryCard = ({ entry }: { entry: Extract<JournalEntry, { kind: 'review' }> }) => {
   const Icon = VERDICT_ICON[entry.verdict];
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
@@ -256,8 +242,6 @@ const ReviewEntryCard = ({
           variant="outlined"
         />
         {entry.sentiment != null && <SentimentMeter value={entry.sentiment} />}
-        <EntryMeta entry={entry} />
-        <EntryControls onEdit={onEdit} onDelete={onDelete} />
       </Box>
       <Typography variant="body2" sx={{ fontWeight: 600 }}>{entry.summary}</Typography>
       <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.5 }}>
@@ -494,6 +478,14 @@ export const JournalPanel: React.FC<JournalPanelProps> = ({ journal, onAdd, onUp
     return '#9e9e9e';
   };
 
+  const dotIcon = (entry: JournalEntry) => {
+    if (entry.kind === 'review') {
+      const Icon = VERDICT_ICON[entry.verdict];
+      return <Icon />;
+    }
+    return <NoteIcon />;
+  };
+
   const groups = groupEntriesByDate(sortedDesc(journal), (e) => e.timestamp);
 
   return (
@@ -522,23 +514,20 @@ export const JournalPanel: React.FC<JournalPanelProps> = ({ journal, onAdd, onUp
             <TimelineDateHeader label={group.label} />
             {group.items.map((entry) =>
               entry.id === editingId ? (
-                <TimelineRow key={entry.id} color={dotColor(entry)}>
+                <TimelineRow key={entry.id} color={dotColor(entry)} icon={dotIcon(entry)}>
                   <EntryForm initialEntry={entry} onSave={handleUpdate} onCancel={() => setEditingId(null)} />
                 </TimelineRow>
               ) : (
-                <TimelineRow key={entry.id} color={dotColor(entry)}>
+                <TimelineRow key={entry.id} color={dotColor(entry)} icon={dotIcon(entry)}>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <TimelineTime>{formatTimestamp(entry.timestamp)}</TimelineTime>
+                    <Box sx={{ flexGrow: 1 }} />
+                    <EntryControls onEdit={() => setEditingId(entry.id)} onDelete={() => onDelete(entry.id)} />
+                  </Box>
                   {entry.kind === 'note' ? (
-                    <NoteEntryCard
-                      entry={entry}
-                      onEdit={() => setEditingId(entry.id)}
-                      onDelete={() => onDelete(entry.id)}
-                    />
+                    <NoteEntryCard entry={entry} />
                   ) : (
-                    <ReviewEntryCard
-                      entry={entry}
-                      onEdit={() => setEditingId(entry.id)}
-                      onDelete={() => onDelete(entry.id)}
-                    />
+                    <ReviewEntryCard entry={entry} />
                   )}
                 </TimelineRow>
               )

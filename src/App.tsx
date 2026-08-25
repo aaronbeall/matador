@@ -191,6 +191,34 @@ const calculateChanges = (candles: Candlestick[], timeFrame: TimeFrame) => {
   return { delta, percent };
 };
 
+// Tab label + inline count bubble — neutral-toned (not MUI's red attention
+// Badge used elsewhere for "needs attention") since this is just "here's
+// how many are selected," not a call to action.
+const TabCountLabel = ({ text, count }: { text: string; count: number }) => (
+  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6 }}>
+    <span>{text}</span>
+    <Box
+      component="span"
+      sx={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minWidth: 16,
+        height: 16,
+        px: 0.5,
+        borderRadius: '999px',
+        fontSize: '0.62rem',
+        fontWeight: 700,
+        lineHeight: 1,
+        bgcolor: 'action.selected',
+        color: 'text.secondary',
+      }}
+    >
+      {count}
+    </Box>
+  </Box>
+);
+
 const AppContent = () => {
   const [symbol, setSymbol] = useState(() => localStorage.getItem(SYMBOL_STORAGE_KEY) || 'QQQ');
   useEffect(() => {
@@ -1325,8 +1353,8 @@ const AppContent = () => {
               variant="fullWidth"
               sx={{ minHeight: 32, position: 'sticky', top: 0, bgcolor: 'background.paper', zIndex: 1, '& .MuiTab-root': { minHeight: 32, py: 0, fontSize: '0.7rem' } }}
             >
-              <Tab value="indicators" label={`Indicators (${indicators.length})`} />
-              <Tab value="patterns" label={`Patterns (${enabledPatterns.length})`} />
+              <Tab value="indicators" label={<TabCountLabel text="Indicators" count={indicators.length} />} />
+              <Tab value="patterns" label={<TabCountLabel text="Patterns" count={enabledPatterns.length} />} />
             </Tabs>
             <Box
               sx={{
@@ -1389,7 +1417,17 @@ const AppContent = () => {
                   title={
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5, maxWidth: 240 }}>
                       {PATTERN_ILLUSTRATIONS[key] && (
-                        <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                        <Box
+                          sx={{
+                            display: 'inline-flex',
+                            alignSelf: 'center',
+                            justifyContent: 'center',
+                            bgcolor: '#161616',
+                            borderRadius: 1,
+                            px: 1.5,
+                            py: 0.75,
+                          }}
+                        >
                           <PatternIllustration candles={PATTERN_ILLUSTRATIONS[key]} />
                         </Box>
                       )}

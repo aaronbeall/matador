@@ -1,8 +1,9 @@
 import React from 'react';
 import { Box, Typography } from '@mui/material';
+import { Insights as AnalysisIcon } from '@mui/icons-material';
 import { AnalysisLogEntry } from '../../types/AnalysisLog';
 import { SymbolBadge } from '../SymbolBadge';
-import { groupEntriesByDate, TimelineDateHeader, TimelineRow } from '../Timeline';
+import { groupEntriesByDate, TimelineDateHeader, TimelineRow, TimelineTime } from '../Timeline';
 
 interface ActivityPanelProps {
   entries: AnalysisLogEntry[];
@@ -30,9 +31,9 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({ entries }) => {
         <React.Fragment key={group.key}>
           <TimelineDateHeader label={group.label} />
           {group.items.map((entry) => (
-            <TimelineRow key={entry.id}>
-              <Box sx={{ display: 'flex', gap: 1, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                <Typography variant="caption" color="text.secondary">{formatTime(entry.timestamp)}</Typography>
+            <TimelineRow key={entry.id} icon={<AnalysisIcon />}>
+              <TimelineTime>{formatTime(entry.timestamp)}</TimelineTime>
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
                 <Typography variant="body2" fontWeight="bold">{entry.tool}</Typography>
                 {entry.symbol && <SymbolBadge symbol={entry.symbol} size="small" />}
               </Box>

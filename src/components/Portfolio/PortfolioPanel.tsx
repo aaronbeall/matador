@@ -15,7 +15,7 @@ import { formatPrice, formatTimestamp, formatRelativeTime, formatDelta } from '.
 import { CHART_COLORS } from '../../constants/colors';
 import { getQuote } from '../../services/dataApi';
 import { SymbolBadge } from '../SymbolBadge';
-import { groupEntriesByDate, TimelineDateHeader, TimelineRow } from '../Timeline';
+import { groupEntriesByDate, TimelineDateHeader, TimelineRow, TimelineTime } from '../Timeline';
 
 interface PortfolioPanelProps {
   positions: Position[];
@@ -203,13 +203,14 @@ const PnLSummary = ({ open, closed }: { open: Position[]; closed: Position[] }) 
   );
 };
 
-const PositionCard = ({ position }: { position: Position }) => {
+const PositionCard = ({ position, leadingTime }: { position: Position; leadingTime?: string }) => {
   const DirIcon = position.direction === 'long' ? LongIcon : ShortIcon;
   const plColor = position.realizedPL == null ? 'text.secondary' : position.realizedPL >= 0 ? 'success.main' : 'error.main';
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 1.25 }}>
+      {leadingTime && <TimelineTime>{formatTimestamp(leadingTime)}</TimelineTime>}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-        <DirIcon fontSize="small" color={position.direction === 'long' ? 'success' : 'error'} />
+        {!leadingTime && <DirIcon fontSize="small" color={position.direction === 'long' ? 'success' : 'error'} />}
         <SymbolBadge symbol={position.symbol} />
         <Chip label={`${position.direction} ${instrumentLabel(position)}`} size="small" variant="outlined" />
         {position.account && <Chip label={position.account} size="small" variant="outlined" />}
@@ -345,11 +346,18 @@ export const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ positions, balan
           {groupEntriesByDate(closed, (p) => p.exitAt ?? p.entryAt).map((group) => (
             <React.Fragment key={group.key}>
               <TimelineDateHeader label={group.label} />
-              {group.items.map((p) => (
-                <TimelineRow key={p.id} color={p.realizedPL == null ? '#9e9e9e' : p.realizedPL >= 0 ? '#4caf50' : '#f44336'}>
-                  <PositionCard position={p} />
-                </TimelineRow>
-              ))}
+              {group.items.map((p) => {
+                const DirIcon = p.direction === 'long' ? LongIcon : ShortIcon;
+                return (
+                  <TimelineRow
+                    key={p.id}
+                    color={p.realizedPL == null ? '#9e9e9e' : p.realizedPL >= 0 ? '#4caf50' : '#f44336'}
+                    icon={<DirIcon />}
+                  >
+                    <PositionCard position={p} leadingTime={p.exitAt ?? p.entryAt} />
+                  </TimelineRow>
+                );
+              })}
             </React.Fragment>
           ))}
         </>

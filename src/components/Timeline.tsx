@@ -46,13 +46,36 @@ export const TimelineDateHeader = ({ label }: { label: string }) => (
   </Box>
 );
 
-// One entry's row: a dot on a continuous vertical line (the classic
-// timeline read) with the entry's own content to the right. `color`
-// lets a dot carry meaning (e.g. a review's verdict color) without
-// each caller re-implementing the line/dot geometry.
-export const TimelineRow = ({ color = '#9e9e9e', children }: { color?: string; children: React.ReactNode }) => (
+// The leading element of every timeline row's content — always the time,
+// always its own line, so a row reads "when, then what" consistently
+// across every panel that uses this timeline (the date itself is already
+// carried by TimelineDateHeader, so this is just the time-of-day/precise
+// stamp within that date).
+export const TimelineTime = ({ children }: { children: React.ReactNode }) => (
+  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontWeight: 700, mb: 0.25 }}>
+    {children}
+  </Typography>
+);
+
+const MARKER_SIZE = 20;
+
+// One entry's row: the entry's own marker icon sitting directly on a
+// continuous vertical line (the classic timeline read), with content to
+// the right. No separate colored dot shape — the icon itself, colored via
+// `color`, *is* the marker; every row needs one (note vs. review, long
+// vs. short, an analysis run, ...) so the timeline always has something
+// concrete to show, not an anonymous circle.
+export const TimelineRow = ({
+  color = 'text.secondary',
+  icon,
+  children,
+}: {
+  color?: string;
+  icon: React.ReactElement;
+  children: React.ReactNode;
+}) => (
   <Box sx={{ display: 'flex', gap: 1.5 }}>
-    <Box sx={{ position: 'relative', width: 10, flexShrink: 0 }}>
+    <Box sx={{ position: 'relative', width: MARKER_SIZE + 4, flexShrink: 0 }}>
       <Box
         sx={{
           position: 'absolute',
@@ -68,17 +91,19 @@ export const TimelineRow = ({ color = '#9e9e9e', children }: { color?: string; c
         sx={{
           position: 'absolute',
           left: '50%',
-          top: 6,
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          bgcolor: color,
-          border: '2px solid',
-          borderColor: 'background.paper',
+          top: 0,
+          width: MARKER_SIZE,
+          height: MARKER_SIZE,
+          bgcolor: 'background.paper',
           transform: 'translateX(-50%)',
           zIndex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
         }}
-      />
+      >
+        {React.cloneElement(icon, { sx: { fontSize: 18, color, ...icon.props.sx } })}
+      </Box>
     </Box>
     <Box sx={{ flexGrow: 1, minWidth: 0, pb: 1.5 }}>{children}</Box>
   </Box>
