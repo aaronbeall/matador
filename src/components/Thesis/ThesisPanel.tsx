@@ -197,7 +197,7 @@ export const ThesisPanel: React.FC<ThesisPanelProps> = ({ thesis, currentSymbol,
   if (thesis.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-        No thesis yet — ask Claude for a read on the current price action and market structure.
+        No thesis yet — ask the agent for a read on the current price action and market structure.
       </Typography>
     );
   }

@@ -1,13 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Box, Typography, Chip, Divider, Stack, IconButton, Tooltip, ButtonBase, Collapse } from '@mui/material';
+import { Box, Typography, Chip, Divider, Stack, IconButton, Tooltip } from '@mui/material';
 import {
   TrendingUp as LongIcon,
   TrendingDown as ShortIcon,
   AccountBalanceWallet as CashIcon,
   Refresh as RefreshIcon,
-  Link as ConnectorIcon,
-  ExpandMore as ExpandMoreIcon,
-  ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, ReferenceLine, Tooltip as RechartsTooltip } from 'recharts';
 import { Position, AccountBalance } from '../../types/Portfolio';
@@ -34,7 +31,7 @@ const CashSummary = ({ balances }: { balances: AccountBalance[] }) => {
   if (balances.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary" sx={{ pb: 1.5 }}>
-        No account balance on file — tell Claude your current cash balance to start tracking it.
+        No account balance on file — tell the agent your current cash balance to start tracking it.
       </Typography>
     );
   }
@@ -237,75 +234,6 @@ const PositionCard = ({ position, leadingTime }: { position: Position; leadingTi
 const sortedDesc = (positions: Position[], key: (p: Position) => string) =>
   [...positions].sort((a, b) => (key(a) < key(b) ? 1 : -1));
 
-// Which accounts this data actually comes from, and how — every one is
-// "Manual" today (Claude relaying what you tell it), since there's no
-// real broker integration yet. Derived straight from the account names
-// already on balances/positions rather than a separate config file — a
-// real connector (an actual synced broker link) is a genuinely different,
-// not-yet-built feature, not something to scaffold ahead of need.
-// A true overlay, not part of the scrolling content — pinned to the
-// bottom edge of the whole panel (the sidebar pane itself, via the
-// `position: relative` ancestor App.tsx sets on it) regardless of scroll
-// position or how little content is above it. Collapsed by default;
-// expanding grows upward from that fixed bottom edge, the way a bottom
-// sheet does, rather than pushing the page down. This is account config/
-// meta, not something to compete with cash/positions for attention on
-// every visit, but always reachable in the same place.
-const ConnectorsSection = ({ balances, positions }: { balances: AccountBalance[]; positions: Position[] }) => {
-  const [open, setOpen] = useState(false);
-  const accounts = [...new Set([
-    ...balances.map((b) => b.account),
-    ...positions.map((p) => p.account).filter((a): a is string => !!a),
-  ])];
-  if (accounts.length === 0) return null;
-
-  return (
-    <Box
-      sx={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: 2,
-        px: 2,
-        pt: 1,
-        pb: 1,
-        bgcolor: 'background.paper',
-        borderTop: '1px solid',
-        borderColor: 'divider',
-        boxShadow: '0 -4px 12px rgba(0,0,0,0.25)',
-      }}
-    >
-      <ButtonBase
-        onClick={() => setOpen((v) => !v)}
-        sx={{ display: 'flex', alignItems: 'center', gap: 0.5, width: '100%', justifyContent: 'space-between' }}
-      >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <ConnectorIcon fontSize="small" color="action" />
-          <Typography variant="overline" color="text.secondary">
-            Connectors ({accounts.length})
-          </Typography>
-        </Box>
-        {open ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
-      </ButtonBase>
-      <Collapse in={open}>
-        <Box sx={{ pt: 0.5, maxHeight: 240, overflow: 'auto' }}>
-          {accounts.map((account) => (
-            <Box key={account} sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.75 }}>
-              <ConnectorIcon fontSize="small" color="action" />
-              <Typography variant="body2" fontWeight={600}>{account}</Typography>
-              <Chip label="Manual" size="small" variant="outlined" />
-            </Box>
-          ))}
-          <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
-            Tracked manually — tell Claude a balance or trade to keep it in sync. Real broker sync isn't
-            built yet.
-          </Typography>
-        </Box>
-      </Collapse>
-    </Box>
-  );
-};
 
 // The one place that reflects only real account state — actual open/
 // closed positions and actual cash, nothing analytical or speculative
@@ -318,9 +246,7 @@ export const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ positions, balan
   const closed = sortedDesc(positions.filter((p) => p.status === 'closed'), (p) => p.exitAt ?? p.entryAt);
 
   return (
-    // Bottom padding clears the fixed Connectors overlay bar so the end
-    // of trade history doesn't render underneath it.
-    <Box sx={{ pb: 5 }}>
+    <Box>
       <CashSummary balances={balances} />
       <PnLSummary open={open} closed={closed} />
       <Divider sx={{ mb: 1 }} />
@@ -362,8 +288,6 @@ export const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ positions, balan
           ))}
         </>
       )}
-
-      <ConnectorsSection balances={balances} positions={positions} />
     </Box>
   );
 };

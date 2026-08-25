@@ -16,6 +16,7 @@ import { Skills } from '../types/Skill';
 import { Theses } from '../types/Thesis';
 import { Journal } from '../types/Journal';
 import { Positions, AccountBalances } from '../types/Portfolio';
+import { Connections } from '../types/Connection';
 
 export async function getWatchlist(): Promise<Watchlist> {
   const res = await fetch('/api/watchlist');
@@ -158,6 +159,14 @@ export async function getAnalysisLog(): Promise<AnalysisLog> {
 export async function getSkills(): Promise<Skills> {
   const res = await fetch('/api/skills');
   if (!res.ok) throw new Error('Failed to load skills');
+  return res.json();
+}
+
+// Read-only for now — every connection is currently hardcoded/manual
+// (see data/connections.json), no UI edits them yet.
+export async function getConnections(): Promise<Connections> {
+  const res = await fetch('/api/connections');
+  if (!res.ok) throw new Error('Failed to load connections');
   return res.json();
 }
 

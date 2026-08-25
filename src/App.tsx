@@ -49,6 +49,7 @@ import {
   Extension as SkillsIcon,
   AutoStories as JournalIcon,
   AccountBalanceWallet as PortfolioIcon,
+  Cable as ConnectionsIcon,
   SmartToy as InstructionsIcon,
   NotificationsActive as NotificationsOnIcon,
   NotificationsOff as NotificationsOffIcon,
@@ -62,6 +63,7 @@ import {
   ComposedChart, Line, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine, Customized, Scatter
 } from 'recharts';
 import { Logo } from './components/Logo';
+import { MarketHoursIndicator } from './components/MarketHoursIndicator';
 import { SymbolBadge } from './components/SymbolBadge';
 import { Indicator, ALL_INDICATORS } from './utils/indicators';
 import { CandlestickBar } from './components/CandlestickBar';
@@ -89,6 +91,7 @@ import { ActivityPanel } from './components/Activity/ActivityPanel';
 import { SkillsPanel } from './components/Skills/SkillsPanel';
 import { JournalPanel } from './components/Journal/JournalPanel';
 import { PortfolioPanel } from './components/Portfolio/PortfolioPanel';
+import { ConnectionsPanel } from './components/Connections/ConnectionsPanel';
 import { InstructionsPanel } from './components/Instructions/InstructionsPanel';
 import { SidebarNav, SidebarNavItem } from './components/Sidebar/SidebarNav';
 import { SkillTip } from './components/Sidebar/SkillTip';
@@ -102,6 +105,7 @@ import { Thesis } from './types/Thesis';
 import { Skill } from './types/Skill';
 import { JournalEntry } from './types/Journal';
 import { Position, AccountBalance } from './types/Portfolio';
+import { Connection } from './types/Connection';
 import {
   getWatchlist,
   saveWatchlist,
@@ -117,14 +121,15 @@ import {
   saveJournal,
   getPortfolioPositions,
   getAccountBalances,
+  getConnections,
   getAgentInstructions,
   rebuildMarketData,
   subscribeToDataEvents,
 } from './services/dataApi';
 
-type TimeFrame = '15m' | '1h' | '3h' | '6h' | '1d' | '1w';
+type TimeFrame = 'today' | '15m' | '1h' | '3h' | '6h' | '1d' | '1w';
 type ChartMode = 'candles' | 'lines' | 'both';
-type SidebarTab = 'watchlist' | 'strategy' | 'thesis' | 'ideas' | 'levels' | 'alerts' | 'journal' | 'portfolio' | 'activity' | 'skills' | 'instructions';
+type SidebarTab = 'watchlist' | 'strategy' | 'thesis' | 'ideas' | 'levels' | 'alerts' | 'journal' | 'portfolio' | 'connections' | 'activity' | 'skills' | 'instructions';
 // Tabs whose "new since last looked" state is worth tracking — Watchlist
 // and Strategy are directly user/Claude-edited, not "arrived" content.
 const TRACKED_TABS: SidebarTab[] = ['thesis', 'ideas', 'levels', 'journal', 'portfolio', 'activity'];
@@ -150,9 +155,9 @@ const SIDEBAR_OPEN_STORAGE_KEY = 'matador-sidebar-open';
 const SIDEBAR_TAB_STORAGE_KEY = 'matador-sidebar-tab';
 
 const VALID_TIME_INTERVALS: TimeInterval[] = ['1m', '5m', '15m', '1h', '1d', '1w'];
-const VALID_TIME_FRAMES: TimeFrame[] = ['15m', '1h', '3h', '6h', '1d', '1w'];
+const VALID_TIME_FRAMES: TimeFrame[] = ['today', '15m', '1h', '3h', '6h', '1d', '1w'];
 const VALID_CHART_MODES: ChartMode[] = ['candles', 'lines', 'both'];
-const VALID_SIDEBAR_TABS: SidebarTab[] = ['watchlist', 'strategy', 'thesis', 'ideas', 'levels', 'alerts', 'journal', 'portfolio', 'activity', 'skills', 'instructions'];
+const VALID_SIDEBAR_TABS: SidebarTab[] = ['watchlist', 'strategy', 'thesis', 'ideas', 'levels', 'alerts', 'journal', 'portfolio', 'connections', 'activity', 'skills', 'instructions'];
 
 function readStoredString<T extends string>(key: string, valid: T[], fallback: T): T {
   const stored = localStorage.getItem(key);
@@ -160,22 +165,78 @@ function readStoredString<T extends string>(key: string, valid: T[], fallback: T
 }
 const STRENGTH_RANK: Record<PatternStrength, number> = { weak: 1, moderate: 2, strong: 3 };
 
-const getTimeFrameMs = (timeFrame: TimeFrame) => 
+// 'today' isn't a fixed trailing duration (see getTodayWindow below) — 24h
+// here is only a harmless fallback for the rare empty-candles case (the
+// initial x-axis domain before any data has loaded at all).
+const getTimeFrameMs = (timeFrame: TimeFrame) =>
   timeFrame === '15m' ? 15 * 60 * 1000 :
   timeFrame === '1h' ? 60 * 60 * 1000 :
   timeFrame === '3h' ? 3 * 60 * 60 * 1000 :
   timeFrame === '6h' ? 6 * 60 * 60 * 1000 :
-  timeFrame === '1d' ? 24 * 60 * 60 * 1000 :
+  timeFrame === '1d' || timeFrame === 'today' ? 24 * 60 * 60 * 1000 :
   7 * 24 * 60 * 60 * 1000;
+
+const ET_TIMEZONE = 'America/New_York';
+
+// Any instant's calendar date as seen in America/New_York, independent of
+// the browser's own local zone.
+function getEtDateParts(timestamp: number): { year: number; month: number; day: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: ET_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(timestamp));
+  const get = (type: string) => Number(parts.find((p) => p.type === type)!.value);
+  return { year: get('year'), month: get('month'), day: get('day') };
+}
+
+// The UTC instant for a given ET calendar date + wall-clock hour/minute —
+// correct across the EDT/EST boundary by measuring the real UTC offset for
+// that specific date (a noon-UTC probe), not just whatever offset applies
+// "now."
+function etWallClockToUtc(year: number, month: number, day: number, hour: number, minute: number): number {
+  const noonUtc = Date.UTC(year, month - 1, day, 12, 0, 0);
+  const etHour = Number(
+    new Intl.DateTimeFormat('en-US', { timeZone: ET_TIMEZONE, hour: '2-digit', hour12: false })
+      .formatToParts(new Date(noonUtc))
+      .find((p) => p.type === 'hour')!.value
+  ) % 24;
+  const offsetHours = 12 - etHour; // 4 (EDT) or 5 (EST)
+  return Date.UTC(year, month - 1, day, hour + offsetHours, minute, 0);
+}
+
+// Regular-session bounds (9:30am-4:00pm ET) for whichever ET calendar day
+// contains `anchorTimestamp` — backs the "Today" time frame. Anchored on
+// the data itself, same principle as getFilteredCandles below, not on
+// wall-clock now: with the market closed, "today" still resolves to the
+// actual last trading day's real session bounds instead of an empty or
+// wrong-day window.
+function getTodayWindow(anchorTimestamp: number): { start: number; end: number } {
+  const { year, month, day } = getEtDateParts(anchorTimestamp);
+  return {
+    start: etWallClockToUtc(year, month, day, 9, 30),
+    end: etWallClockToUtc(year, month, day, 16, 0),
+  };
+}
 
 // Anchored on the latest candle actually present, not on wall-clock now —
 // with the market closed overnight/weekend, "now" can sit hours past the
 // last real trade, so a wall-clock trailing window would filter out all
 // the data even though it's right there. Anchoring on the data itself
-// means the window always contains the most recent bars we have.
+// means the window always contains the most recent bars we have. 'today'
+// is the one exception to "trailing duration": it's an absolute window
+// (this session's actual open/close), not a rolling lookback — filtering
+// naturally caps at "now" mid-session (there's simply no candle data past
+// the anchor yet) and at the real close once the session's over, rather
+// than spilling into after-hours prints.
 const getFilteredCandles = (candles: Candlestick[], timeFrame: TimeFrame) => {
   if (!candles.length) return candles;
   const anchor = candles[candles.length - 1].timestamp;
+  if (timeFrame === 'today') {
+    const { start, end } = getTodayWindow(anchor);
+    return candles.filter((c) => c.timestamp >= start && c.timestamp <= end);
+  }
   return candles.filter(c => c.timestamp > anchor - getTimeFrameMs(timeFrame));
 };
 
@@ -457,6 +518,7 @@ const AppContent = () => {
   const [journal, setJournal] = useState<JournalEntry[]>([]);
   const [portfolioPositions, setPortfolioPositions] = useState<Position[]>([]);
   const [accountBalances, setAccountBalances] = useState<AccountBalance[]>([]);
+  const [connections, setConnections] = useState<Connection[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [analysisDataUpdatedAt, setAnalysisDataUpdatedAt] = useState<Date | null>(null);
 
@@ -525,6 +587,7 @@ const AppContent = () => {
     { value: 'alerts', label: 'Alerts', icon: <AlertsIcon />, badgeCount: alertsActiveCount },
     { value: 'journal', label: 'Journal', icon: <JournalIcon />, badgeCount: journalNewCount },
     { value: 'portfolio', label: 'Portfolio', icon: <PortfolioIcon />, badgeCount: portfolioNewCount },
+    { value: 'connections', label: 'Connections', icon: <ConnectionsIcon /> },
     { value: 'activity', label: 'Activity', icon: <ActivityIcon />, badgeCount: activityNewCount },
     { value: 'skills', label: 'Skills', icon: <SkillsIcon /> },
     { value: 'instructions', label: 'Agent', icon: <InstructionsIcon /> },
@@ -679,6 +742,9 @@ const AppContent = () => {
     }
     if (!only || only === 'portfolio-balances') {
       tasks.push(getAccountBalances().then(setAccountBalances).catch(() => {}));
+    }
+    if (!only || only === 'connections') {
+      tasks.push(getConnections().then(setConnections).catch(() => {}));
     }
     if (!only || only === 'skills') {
       tasks.push(getSkills().then(setSkills).catch(() => {}));
@@ -1179,6 +1245,7 @@ const AppContent = () => {
           </Box>
         </Toolbar>
       </AppBar>
+      <MarketHoursIndicator />
       <Box sx={{ flexGrow: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
       <Container
         maxWidth={false}
@@ -1327,6 +1394,7 @@ const AppContent = () => {
               onChange={handleTimeFrameChange}
               size="small"
             >
+              <ToggleButton value="today">Today</ToggleButton>
               <ToggleButton value="15m">15M</ToggleButton>
               <ToggleButton value="1h">1H</ToggleButton>
               <ToggleButton value="3h">3H</ToggleButton>
@@ -1900,7 +1968,7 @@ const AppContent = () => {
               {sidebarTab === 'watchlist' && (
                 <>
                   <SkillTip>
-                    Add/remove symbols here directly, or just ask Claude to add one to the watchlist. The
+                    Add/remove symbols here directly, or just ask the agent to add one to the watchlist. The
                     switch pauses a symbol entirely — no market data caching, no find-trades analysis —
                     without removing it.
                   </SkillTip>
@@ -1917,7 +1985,7 @@ const AppContent = () => {
               {sidebarTab === 'strategy' && (
                 <>
                   <SkillTip>
-                    Edited by Claude directly when you discuss strategy changes in chat — no skill needed, just talk
+                    Edited by the agent directly when you discuss strategy changes in chat — no skill needed, just talk
                     through the change.
                   </SkillTip>
                   <StrategyPanel
@@ -1931,7 +1999,7 @@ const AppContent = () => {
               {sidebarTab === 'thesis' && (
                 <>
                   <SkillTip>
-                    Claude's standing read on each symbol — written directly in chat when you ask for an
+                    The agent's standing read on each symbol — written directly in chat when you ask for an
                     analysis or a prediction, no skill needed. Distinct from Ideas (a concrete trade
                     proposal) and Alerts (a one-shot trigger) — this is the running "why" behind them.
                   </SkillTip>
@@ -1941,7 +2009,7 @@ const AppContent = () => {
               {sidebarTab === 'ideas' && (
                 <>
                   <SkillTip>
-                    Populated by the <code>find-trades</code> skill — ask Claude to "scan for trades" or run{' '}
+                    Populated by the <code>find-trades</code> skill — ask the agent to "scan for trades" or run{' '}
                     <code>/find-trades</code>.
                   </SkillTip>
                   <IdeasPanel ideas={tradeIdeas} lastUpdated={analysisDataUpdatedAt} currentSymbol={symbol} multiSymbol={multiSymbol} />
@@ -1969,8 +2037,8 @@ const AppContent = () => {
               {sidebarTab === 'journal' && (
                 <>
                   <SkillTip>
-                    Freeform notes worth remembering, plus Claude's own self-graded reviews of past thesis/
-                    alert calls against what actually happened. Kept up to date by Claude in chat, or add/
+                    Freeform notes worth remembering, plus the agent's own self-graded reviews of past thesis/
+                    alert calls against what actually happened. Kept up to date by the agent in chat, or add/
                     edit/delete entries directly here. For real trades and account balance, see Portfolio
                     instead.
                   </SkillTip>
@@ -1985,11 +2053,20 @@ const AppContent = () => {
               {sidebarTab === 'portfolio' && (
                 <>
                   <SkillTip>
-                    Actual account state only — real open/closed positions and real cash. Just tell Claude
+                    Actual account state only — real open/closed positions and real cash. Just tell the agent
                     ("bought 5 QQQ 715c", "closed for +\$340", "deposited \$2k") and it's kept up to date. No
                     analysis or plans here — see Thesis/Ideas/Journal for that.
                   </SkillTip>
                   <PortfolioPanel positions={portfolioPositions} balances={accountBalances} />
+                </>
+              )}
+              {sidebarTab === 'connections' && (
+                <>
+                  <SkillTip>
+                    External systems this app reflects — market data and brokerage accounts. Configured
+                    conversationally, same as the rest of this app: tell the agent what to change.
+                  </SkillTip>
+                  <ConnectionsPanel connections={connections} />
                 </>
               )}
               {sidebarTab === 'activity' && (
@@ -2004,8 +2081,8 @@ const AppContent = () => {
               {sidebarTab === 'skills' && (
                 <>
                   <SkillTip>
-                    Documentation for every Claude skill available in this project, read straight from{' '}
-                    <code>.claude/skills/*/SKILL.md</code> — ask Claude to add or edit a skill and this updates
+                    Documentation for every agent skill available in this project, read straight from{' '}
+                    <code>.claude/skills/*/SKILL.md</code> — ask the agent to add or edit a skill and this updates
                     itself.
                   </SkillTip>
                   <SkillsPanel skills={skills} />

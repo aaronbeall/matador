@@ -242,7 +242,7 @@ const NoteEntryCard = ({ entry }: { entry: Extract<JournalEntry, { kind: 'note' 
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
         <Typography variant="caption" sx={{ fontWeight: 600 }}>
-          {entry.author === 'user' ? 'You' : 'Claude'}
+          {entry.author === 'user' ? 'You' : 'Agent'}
         </Typography>
         {entry.symbol && <SymbolBadge symbol={entry.symbol} size="small" />}
         {entry.verdict && VerdictIcon && (
@@ -568,7 +568,7 @@ export const JournalPanel: React.FC<JournalPanelProps> = ({ journal, onAdd, onUp
 
       {journal.length === 0 && !adding ? (
         <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-          No journal entries yet — add one, tell Claude a note worth remembering, or ask it to review how
+          No journal entries yet — add one, tell the agent a note worth remembering, or ask it to review how
           a past thesis or alert played out.
         </Typography>
       ) : (

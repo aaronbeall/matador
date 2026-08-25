@@ -1,5 +1,16 @@
 # Matador — project instructions
 
+## UI terminology: "the agent," not "Claude"
+
+App UI copy (SkillTips, empty states, tooltips, entry-author labels, etc.)
+refers to **"the agent"** generically, never "Claude" by name — the UI is
+meant to stay agent-agnostic since a different agent could plug in here
+later. The one exception is the **Agent tab** itself (`instructions`
+sidebar tab / `InstructionsPanel`), which is specifically about the
+Claude integration and may say "Claude" where genuinely accurate.
+Internal code comments explaining design rationale are unaffected either
+way — this is about user-visible strings only.
+
 ## Portfolio (actual account state — positions and cash, nothing else)
 
 `data/portfolio-positions.json` and `data/portfolio-balances.json` are

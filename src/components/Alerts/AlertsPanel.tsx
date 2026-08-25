@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { Box, Typography, Chip, ButtonBase, Tooltip, Collapse, Divider } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -382,20 +382,29 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts }) => {
   // to ids we haven't seen yet — covering both "alerts finally loaded"
   // and "a genuinely new alert just arrived" the same way, while leaving
   // anything the user has already toggled alone.
+  //
+  // This runs during render, not in a useEffect — an effect fires after
+  // the first paint, so there'd be one visible frame of every card open
+  // (the pre-default state) before it snapped closed again. Adjusting
+  // state directly in the render body is React's own sanctioned pattern
+  // for this ("you might not need an effect" > derived state): calling
+  // setState here re-renders before the browser paints, and it can't
+  // loop, since `seenIds` is mutated synchronously in the same pass —
+  // the next render sees nothing left unseen.
   const seenIds = useRef<Set<string>>(new Set());
   const [collapsedBodies, setCollapsedBodies] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    const unseen = alerts.filter((a) => !seenIds.current.has(a.id));
-    if (unseen.length === 0) return;
+  const unseen = alerts.filter((a) => !seenIds.current.has(a.id));
+  if (unseen.length > 0) {
     unseen.forEach((a) => seenIds.current.add(a.id));
     const toCollapse = unseen.filter((a) => !isAlertLive(a)).map((a) => a.id);
-    if (toCollapse.length === 0) return;
-    setCollapsedBodies((prev) => {
-      const next = new Set(prev);
-      toCollapse.forEach((id) => next.add(id));
-      return next;
-    });
-  }, [alerts]);
+    if (toCollapse.length > 0) {
+      setCollapsedBodies((prev) => {
+        const next = new Set(prev);
+        toCollapse.forEach((id) => next.add(id));
+        return next;
+      });
+    }
+  }
   const [legendOpen, setLegendOpen] = useState(false);
 
   const legend = (
@@ -442,13 +451,17 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts }) => {
   };
 
   const renderAlert = (alert: Alert) => {
-    // Faded = no longer live: nothing here is actively notifying you
-    // anymore. isAlertLive is the single definition of "active" shared
-    // with the Alerts badge count, so the two can't disagree the way they
-    // used to (a `pending` alert past its own window used to render
-    // exactly like a fresh one forever — see isAlertLive's doc comment).
-    const dimmed = !isAlertLive(alert);
     const bodyOpen = !collapsedBodies.has(alert.id);
+    // Faded = no longer live AND not currently being looked at. isAlertLive
+    // is the single definition of "active" shared with the Alerts badge
+    // count, so the two can't disagree the way they used to (a `pending`
+    // alert past its own window used to render exactly like a fresh one
+    // forever — see isAlertLive's doc comment). Deliberately excluding
+    // `bodyOpen` alerts from fading too: someone who's expanded a stale
+    // alert to read it is actively looking at it right now — dimming the
+    // very thing they opened to inspect fights the reason they opened it.
+    // It fades back out once they collapse it again.
+    const dimmed = !isAlertLive(alert) && !bodyOpen;
     // A prominent banner only once it's actually triggered and there's a
     // real action to take — a pending "watch only" alert gets a quieter
     // inline hint instead (see below), not a banner competing for
