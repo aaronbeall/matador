@@ -4,7 +4,14 @@ import { colorForStrength } from './PatternVisuals';
 
 export interface PatternMarkerPoint {
   timestamp: number;
-  price: number;
+  // null for a candle with no (visible) pattern — every candle gets an
+  // entry, not just the ones with a hit, so this Scatter's data array
+  // stays index-aligned with the main chart's own `filteredCandles`.
+  // Recharts' hover/crosshair tracking on a `type="number"`/`scale="time"`
+  // XAxis gets confused when sibling series have differently-sized data
+  // arrays (it can snap the shared hover state to the wrong candle
+  // entirely) — a shorter, pre-filtered array was exactly that bug.
+  price: number | null;
   direction: PatternDirection | 'mixed';
   // The strongest strength among this candle's (enabled) patterns —
   // drives the marker's brightness, see colorForStrength.
@@ -43,7 +50,7 @@ interface PatternMarkerShapeProps {
 // bullseye.
 export const PatternMarkerShape = (props: PatternMarkerShapeProps) => {
   const { cx, cy, payload, onHover, onLeave } = props;
-  if (cx == null || cy == null || !payload) return <g />;
+  if (cx == null || cy == null || !payload || payload.price == null) return <g />;
   const color = colorForStrength(BASE_COLOR[payload.direction] ?? '#9e9e9e', payload.strength);
   const radius = STRENGTH_RADIUS[payload.strength];
 

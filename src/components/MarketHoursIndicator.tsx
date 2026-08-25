@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, Tooltip } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 import { getMarketSession, getEtClockLabel, MarketSession } from '../utils/marketHours';
 
 const SESSION_EMOJI: Record<MarketSession, string> = {
@@ -38,9 +38,6 @@ const SESSION_TEXT_COLOR: Record<MarketSession, string> = {
   afterhours: '#fff',
 };
 
-// Cycling order for the click-to-preview testing affordance below.
-const SESSION_CYCLE: MarketSession[] = ['closed', 'premarket', 'open', 'afterhours'];
-
 // A large, soft, fixed radial glow behind the entire app, centered where
 // the indicator sits (top-center) — the actual "day/night lighting
 // effect," rather than confined to the indicator's own small shape. Sits
@@ -69,78 +66,53 @@ const GlowBackground = ({ session }: { session: MarketSession }) => (
 // height (`position: relative; height: 0`), so the header and side panel
 // still butt directly against each other; the pill is purely an absolutely
 // positioned overlay on top, not a layout row anything else has to make
-// room for. Clicking it cycles through all four stages for testing/preview
-// purposes, then back to the real live reading — see `override` below.
+// room for.
 export const MarketHoursIndicator: React.FC = () => {
   const [now, setNow] = useState(() => Date.now());
-  // null = following the real clock; a value = previewing that stage
-  // instead, for testing what each looks like without waiting for it.
-  const [override, setOverride] = useState<MarketSession | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(interval);
   }, []);
 
-  const liveSession = getMarketSession(now);
-  const session = override ?? liveSession;
-
-  const handleClick = () => {
-    const currentIndex = override ? SESSION_CYCLE.indexOf(override) : -1;
-    const nextIndex = currentIndex + 1;
-    setOverride(nextIndex >= SESSION_CYCLE.length ? null : SESSION_CYCLE[nextIndex]);
-  };
+  const session = getMarketSession(now);
 
   return (
     <>
       <GlowBackground session={session} />
       <Box sx={{ position: 'relative', height: 0 }}>
-        <Tooltip title="Click to preview each session stage (testing)">
-          <Box
-            onClick={handleClick}
-            sx={{
-              position: 'absolute',
-              top: -16,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              zIndex: (theme) => theme.zIndex.appBar + 1,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.75,
-              px: 1.5,
-              py: 0.4,
-              borderRadius: 5,
-              bgcolor: `${SESSION_GLOW[session]}40`,
-              backdropFilter: 'blur(8px)',
-              border: '1px solid rgba(255,255,255,0.18)',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.35)',
-              cursor: 'pointer',
-              userSelect: 'none',
-            }}
+        <Box
+          sx={{
+            position: 'absolute',
+            top: -16,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: (theme) => theme.zIndex.appBar + 1,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.75,
+            px: 1.5,
+            py: 0.4,
+            borderRadius: 5,
+            bgcolor: `${SESSION_GLOW[session]}40`,
+            backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(255,255,255,0.18)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.35)',
+          }}
+        >
+          <Typography component="span" sx={{ fontSize: '0.95rem', lineHeight: 1 }}>
+            {SESSION_EMOJI[session]}
+          </Typography>
+          <Typography
+            variant="caption"
+            sx={{ fontWeight: 700, color: SESSION_TEXT_COLOR[session], letterSpacing: 0.3 }}
           >
-            <Typography component="span" sx={{ fontSize: '0.95rem', lineHeight: 1 }}>
-              {SESSION_EMOJI[session]}
-            </Typography>
-            <Typography
-              variant="caption"
-              sx={{ fontWeight: 700, color: SESSION_TEXT_COLOR[session], letterSpacing: 0.3 }}
-            >
-              {SESSION_LABEL[session]}
-            </Typography>
-            <Typography variant="caption" sx={{ color: SESSION_TEXT_COLOR[session], opacity: 0.85 }}>
-              · {getEtClockLabel(now)}
-            </Typography>
-            {override && (
-              <Typography
-                variant="caption"
-                fontStyle="italic"
-                sx={{ color: SESSION_TEXT_COLOR[session], opacity: 0.7 }}
-              >
-                (preview)
-              </Typography>
-            )}
-          </Box>
-        </Tooltip>
+            {SESSION_LABEL[session]}
+          </Typography>
+          <Typography variant="caption" sx={{ color: SESSION_TEXT_COLOR[session], opacity: 0.85 }}>
+            · {getEtClockLabel(now)}
+          </Typography>
+        </Box>
       </Box>
     </>
   );

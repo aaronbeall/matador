@@ -75,9 +75,12 @@ import { PatternBadges } from './components/PatternBadges';
 import { PatternTooltip } from './components/PatternTooltip';
 import { getPatternColor } from './components/PatternVisuals';
 import { PatternIllustration, PATTERN_ILLUSTRATIONS } from './components/PatternIllustration';
+import { CrossMarkerShape, CrossMarkerPoint } from './components/CrossMarker';
+import { CrossTooltip } from './components/CrossTooltip';
 import { computeAutoLevels } from './utils/autoLevels';
 import { CHART_COLORS } from './constants/colors';
 import { PATTERN_INFO, PatternStrength } from './constants/patterns';
+import { SIGNAL_INFO, SignalKey } from './constants/signals';
 import { formatPrice, formatVolume, formatDelta, formatPercent, formatTimestamp, formatRelativeTime } from './utils/formatters';
 import { isAlertLive } from './utils/alerts';
 import { INDICATOR_DEFS } from './constants/indicators';
@@ -141,8 +144,10 @@ const SIDEBAR_MIN_WIDTH = 320;
 const SIDEBAR_MAX_WIDTH = 720;
 const INDICATORS_STORAGE_KEY = 'matador-indicators';
 const PATTERNS_STORAGE_KEY = 'matador-patterns';
+const SIGNALS_STORAGE_KEY = 'matador-signals';
 const INDICATORS_VISIBLE_STORAGE_KEY = 'matador-indicators-visible';
 const PATTERNS_VISIBLE_STORAGE_KEY = 'matador-patterns-visible';
+const SIGNALS_VISIBLE_STORAGE_KEY = 'matador-signals-visible';
 
 // Remaining UI-state persistence keys — same read-once-with-validation,
 // write-on-change pattern as sidebarWidth/indicators/enabledPatterns
@@ -165,6 +170,14 @@ function readStoredString<T extends string>(key: string, valid: T[], fallback: T
   return valid.includes(stored as T) ? (stored as T) : fallback;
 }
 const STRENGTH_RANK: Record<PatternStrength, number> = { weak: 1, moderate: 2, strong: 3 };
+
+// Settings-menu swatch color per signal — tied to its source indicator's
+// own chart color (ema9's yellow, macd's blue) rather than a new color, so
+// the swatch hints at which series it's derived from.
+const SIGNAL_SWATCH: Record<SignalKey, string> = {
+  'ema-cross': CHART_COLORS.ema9,
+  'macd-cross': CHART_COLORS.macd,
+};
 
 // 'today' isn't a fixed trailing duration (see getTodayWindow below) — 24h
 // here is only a harmless fallback for the rare empty-candles case (the
@@ -359,12 +372,35 @@ const AppContent = () => {
     );
   };
 
+  // Crossover signals — a third category alongside indicators (continuous
+  // overlays) and patterns (single-candle tags): a crossover is a detected
+  // *event* between two indicator series, computed purely client-side (see
+  // emaCrossMarkers/macdCrossMarkers below) since every input field is
+  // already on each candle. Same selection/mute/persistence shape as
+  // patterns above.
+  const [enabledSignals, setEnabledSignals] = useState<string[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(SIGNALS_STORAGE_KEY) ?? 'null');
+      return Array.isArray(stored) ? stored.filter((s): s is string => s in SIGNAL_INFO) : Object.keys(SIGNAL_INFO);
+    } catch {
+      return Object.keys(SIGNAL_INFO);
+    }
+  });
+  useEffect(() => {
+    localStorage.setItem(SIGNALS_STORAGE_KEY, JSON.stringify(enabledSignals));
+  }, [enabledSignals]);
+  const handleSignalToggle = (signalKey: string) => {
+    setEnabledSignals((prev) =>
+      prev.includes(signalKey) ? prev.filter((s) => s !== signalKey) : [...prev, signalKey]
+    );
+  };
+
   // A wholesale mute per category, layered on top of the actual
-  // indicator/pattern selection rather than touching it — flipping this
-  // off hides everything in that category from the chart without losing
-  // which specific ones you'd chosen, so switching it back on restores
-  // exactly what you had. Quick way to isolate one category or mute the
-  // other for a bit.
+  // indicator/pattern/signal selection rather than touching it — flipping
+  // this off hides everything in that category from the chart without
+  // losing which specific ones you'd chosen, so switching it back on
+  // restores exactly what you had. Quick way to isolate one category or
+  // mute the other for a bit.
   const [indicatorsVisible, setIndicatorsVisible] = useState(() => {
     const stored = localStorage.getItem(INDICATORS_VISIBLE_STORAGE_KEY);
     return stored === null ? true : stored === 'true';
@@ -379,15 +415,23 @@ const AppContent = () => {
   useEffect(() => {
     localStorage.setItem(PATTERNS_VISIBLE_STORAGE_KEY, String(patternsVisible));
   }, [patternsVisible]);
+  const [signalsVisible, setSignalsVisible] = useState(() => {
+    const stored = localStorage.getItem(SIGNALS_VISIBLE_STORAGE_KEY);
+    return stored === null ? true : stored === 'true';
+  });
+  useEffect(() => {
+    localStorage.setItem(SIGNALS_VISIBLE_STORAGE_KEY, String(signalsVisible));
+  }, [signalsVisible]);
   // What the chart actually renders — the real selection, filtered
-  // through the mute switch. Keep `indicators`/`enabledPatterns`
-  // themselves untouched everywhere else (checkboxes, counts) so they
-  // always reflect the real configuration.
+  // through the mute switch. Keep `indicators`/`enabledPatterns`/
+  // `enabledSignals` themselves untouched everywhere else (checkboxes,
+  // counts) so they always reflect the real configuration.
   const visibleIndicators = indicatorsVisible ? indicators : [];
   const visiblePatterns = patternsVisible ? enabledPatterns : [];
+  const visibleSignals = signalsVisible ? enabledSignals : [];
 
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
-  const [menuTab, setMenuTab] = useState<'indicators' | 'patterns'>('indicators');
+  const [menuTab, setMenuTab] = useState<'indicators' | 'patterns' | 'signals'>('indicators');
   // Horizontal price crosshair on the main chart — Recharts' Tooltip only
   // gives a vertical, nearest-candle crosshair out of the box; Y is
   // continuous, not categorical, so there's no built-in equivalent for
@@ -429,6 +473,17 @@ const AppContent = () => {
     setHoveredPatternMarker({ point, x: evt.clientX, y: evt.clientY });
   }, []);
   const handlePatternMarkerLeave = useCallback(() => setHoveredPatternMarker(null), []);
+
+  // Same hover-tooltip shape as pattern markers, for crossover markers.
+  const [hoveredCrossMarker, setHoveredCrossMarker] = useState<{
+    point: CrossMarkerPoint;
+    x: number;
+    y: number;
+  } | null>(null);
+  const handleCrossMarkerHover = useCallback((point: CrossMarkerPoint, evt: React.MouseEvent) => {
+    setHoveredCrossMarker({ point, x: evt.clientX, y: evt.clientY });
+  }, []);
+  const handleCrossMarkerLeave = useCallback(() => setHoveredCrossMarker(null), []);
 
   const marketDataClient = useRef<MarketDataClient | null>(null);
   const [wsEnabled, setWsEnabled] = useState(true);
@@ -1100,29 +1155,82 @@ const AppContent = () => {
   // matching the marker's own tooltip behavior exactly.
   const displayPatterns: string[] = (hoveredCandle?.patterns ?? []).filter((p) => visiblePatterns.includes(p));
 
-  // One marker per candle carrying an enabled pattern, positioned above
+  // One entry per candle (not just the ones with a hit) — positioned above
   // the high for a bearish read, below the low for bullish, at the
-  // midpoint for neutral/mixed — see PatternMarker.tsx for the shape,
+  // midpoint for neutral/mixed, or `price: null` for a candle with nothing
+  // to show. Every marker/signal Scatter on this chart is built this way,
+  // full-length and index-aligned with filteredCandles: a shorter,
+  // pre-filtered array breaks Recharts' shared hover/crosshair tracking on
+  // this chart's continuous time-scale XAxis (it can snap the crosshair to
+  // the wrong candle entirely once a sibling series has fewer points than
+  // the main data) — see PatternMarker.tsx for the shape,
   // PatternTooltip.tsx for the hover detail.
-  const patternMarkers: PatternMarkerPoint[] = filteredCandles
-    .map((c) => ({ ...c, patterns: (c.patterns ?? []).filter((p) => visiblePatterns.includes(p)) }))
-    .filter((c) => c.patterns.length > 0)
-    .map((c) => {
-      const dirs = c.patterns.map((p) => PATTERN_INFO[p]?.direction ?? 'neutral');
-      const hasBullish = dirs.includes('bullish');
-      const hasBearish = dirs.includes('bearish');
-      const direction: PatternMarkerPoint['direction'] =
-        hasBullish && hasBearish ? 'mixed' : hasBullish ? 'bullish' : hasBearish ? 'bearish' : 'neutral';
-      const price = direction === 'bearish' ? c.high : direction === 'bullish' ? c.low : (c.high + c.low) / 2;
-      // The marker's brightness follows the strongest signal at this
-      // candle, not just the first pattern found — a candle carrying both
-      // a doji and a morning-star should read as strong, not weak.
-      const strength = c.patterns.reduce<PatternStrength>((best, p) => {
-        const s = PATTERN_INFO[p]?.strength ?? 'weak';
-        return STRENGTH_RANK[s] > STRENGTH_RANK[best] ? s : best;
-      }, 'weak');
-      return { timestamp: c.timestamp, price, direction, strength, patterns: c.patterns };
-    });
+  const patternMarkers: PatternMarkerPoint[] = filteredCandles.map((c) => {
+    const patterns = (c.patterns ?? []).filter((p) => visiblePatterns.includes(p));
+    if (patterns.length === 0) return { timestamp: c.timestamp, price: null, direction: 'neutral', strength: 'weak', patterns: [] };
+    const dirs = patterns.map((p) => PATTERN_INFO[p]?.direction ?? 'neutral');
+    const hasBullish = dirs.includes('bullish');
+    const hasBearish = dirs.includes('bearish');
+    const direction: PatternMarkerPoint['direction'] =
+      hasBullish && hasBearish ? 'mixed' : hasBullish ? 'bullish' : hasBearish ? 'bearish' : 'neutral';
+    const price = direction === 'bearish' ? c.high : direction === 'bullish' ? c.low : (c.high + c.low) / 2;
+    // The marker's brightness follows the strongest signal at this
+    // candle, not just the first pattern found — a candle carrying both
+    // a doji and a morning-star should read as strong, not weak.
+    const strength = patterns.reduce<PatternStrength>((best, p) => {
+      const s = PATTERN_INFO[p]?.strength ?? 'weak';
+      return STRENGTH_RANK[s] > STRENGTH_RANK[best] ? s : best;
+    }, 'weak');
+    return { timestamp: c.timestamp, price, direction, strength, patterns };
+  });
+
+  // One entry per candle for each enabled crossover signal — computed
+  // purely client-side (a simple sign-change scan over adjacent candles)
+  // since ema9/ema21/macd/signal are already on every candle; no backend
+  // change needed, same edge-trigger shape alertsEngine.ts uses for the
+  // equivalent alert conditions. `value` positions the marker at the
+  // midpoint of the two crossing series so it sits right at the visual
+  // cross, not off to one side; `null` (see patternMarkers above for why
+  // every candle needs an entry either way) for a non-crossing candle.
+  const emaCrossMarkers: CrossMarkerPoint[] = filteredCandles.map((curr, i) => {
+    if (!visibleSignals.includes('ema-cross')) return { timestamp: curr.timestamp, value: null, direction: 'neutral' };
+    const prev = filteredCandles[i - 1];
+    if (!prev || prev.ema9 == null || prev.ema21 == null || curr.ema9 == null || curr.ema21 == null) {
+      return { timestamp: curr.timestamp, value: null, direction: 'neutral' };
+    }
+    const prevDiff = prev.ema9 - prev.ema21;
+    const currDiff = curr.ema9 - curr.ema21;
+    const value = (curr.ema9 + curr.ema21) / 2;
+    if (prevDiff <= 0 && currDiff > 0) return { timestamp: curr.timestamp, value, direction: 'bullish', signal: 'ema-cross' };
+    if (prevDiff >= 0 && currDiff < 0) return { timestamp: curr.timestamp, value, direction: 'bearish', signal: 'ema-cross' };
+    return { timestamp: curr.timestamp, value: null, direction: 'neutral' };
+  });
+
+  const macdCrossMarkers: CrossMarkerPoint[] = filteredCandles.map((curr, i) => {
+    if (!visibleSignals.includes('macd-cross')) return { timestamp: curr.timestamp, value: null, direction: 'neutral' };
+    const prev = filteredCandles[i - 1];
+    if (!prev || prev.macd == null || prev.signal == null || curr.macd == null || curr.signal == null) {
+      return { timestamp: curr.timestamp, value: null, direction: 'neutral' };
+    }
+    const prevDiff = prev.macd - prev.signal;
+    const currDiff = curr.macd - curr.signal;
+    const value = (curr.macd + curr.signal) / 2;
+    if (prevDiff <= 0 && currDiff > 0) return { timestamp: curr.timestamp, value, direction: 'bullish', signal: 'macd-cross' };
+    if (prevDiff >= 0 && currDiff < 0) return { timestamp: curr.timestamp, value, direction: 'bearish', signal: 'macd-cross' };
+    return { timestamp: curr.timestamp, value: null, direction: 'neutral' };
+  });
+
+  // Whether each full-length marker array actually has anything to show —
+  // gates whether its Scatter renders at all. An all-null Scatter (every
+  // signal/pattern off) broke the rest of its own chart panel entirely
+  // (MACD's Line series disappeared along with the cross markers) rather
+  // than just rendering nothing, since Recharts computes a shared axis
+  // domain across every series in the panel and an all-null series
+  // corrupts that — so when there's truly nothing to plot, omit the
+  // Scatter tag outright instead of handing it an empty dataset.
+  const hasPatternMarkers = patternMarkers.some((m) => m.price != null);
+  const hasEmaCrossMarkers = emaCrossMarkers.some((m) => m.value != null);
+  const hasMacdCrossMarkers = macdCrossMarkers.some((m) => m.value != null);
 
   // Auto-computed reference levels (prior day H/L/C, premarket H/L,
   // opening range) — only meaningful zoomed into intraday granularity,
@@ -1426,7 +1534,7 @@ const AppContent = () => {
             open={Boolean(menuAnchor)}
             onClose={() => setMenuAnchor(null)}
             MenuListProps={{ dense: true, sx: { py: 0 } }}
-            slotProps={{ paper: { sx: { maxHeight: 420, width: 210 } } }}
+            slotProps={{ paper: { sx: { maxHeight: 420, width: 320 } } }}
           >
             <Tabs
               value={menuTab}
@@ -1436,6 +1544,7 @@ const AppContent = () => {
             >
               <Tab value="indicators" label={<TabCountLabel text="Indicators" count={indicators.length} />} />
               <Tab value="patterns" label={<TabCountLabel text="Patterns" count={enabledPatterns.length} />} />
+              <Tab value="signals" label={<TabCountLabel text="Signals" count={enabledSignals.length} />} />
             </Tabs>
             <Box
               sx={{
@@ -1453,11 +1562,15 @@ const AppContent = () => {
               </Typography>
               <Switch
                 size="small"
-                checked={menuTab === 'indicators' ? indicatorsVisible : patternsVisible}
+                checked={
+                  menuTab === 'indicators' ? indicatorsVisible : menuTab === 'patterns' ? patternsVisible : signalsVisible
+                }
                 onChange={() =>
                   menuTab === 'indicators'
                     ? setIndicatorsVisible((v) => !v)
-                    : setPatternsVisible((v) => !v)
+                    : menuTab === 'patterns'
+                      ? setPatternsVisible((v) => !v)
+                      : setSignalsVisible((v) => !v)
                 }
               />
             </Box>
@@ -1527,6 +1640,34 @@ const AppContent = () => {
                     />
                     <Box
                       sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: getPatternColor(info.direction, info.strength), mr: 0.75, flexShrink: 0 }}
+                    />
+                    <Typography variant="caption" noWrap>{info.label}</Typography>
+                  </MenuItem>
+                </MuiTooltip>
+              ))}
+            {menuTab === 'signals' &&
+              Object.entries(SIGNAL_INFO).map(([key, info]) => (
+                <MuiTooltip
+                  key={key}
+                  placement="right"
+                  arrow
+                  title={
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5, maxWidth: 240 }}>
+                      <Typography variant="caption" sx={{ fontWeight: 700 }}>{info.label}</Typography>
+                      <Typography variant="caption" color="text.secondary">{info.description}</Typography>
+                      <Typography variant="caption" sx={{ fontStyle: 'italic' }}>{info.why}</Typography>
+                    </Box>
+                  }
+                >
+                  <MenuItem sx={{ minHeight: 26, py: 0.25, px: 1 }} onClick={() => handleSignalToggle(key)}>
+                    <Checkbox
+                      size="small"
+                      checked={enabledSignals.includes(key)}
+                      onChange={() => {}}
+                      sx={{ p: 0.25, mr: 0.75 }}
+                    />
+                    <Box
+                      sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: SIGNAL_SWATCH[key as SignalKey], mr: 0.75, flexShrink: 0 }}
                     />
                     <Typography variant="caption" noWrap>{info.label}</Typography>
                   </MenuItem>
@@ -1826,12 +1967,23 @@ const AppContent = () => {
                     isAnimationActive={false}
                   />
                 )}
-                {patternMarkers.length > 0 && (
+                {hasPatternMarkers && (
                   <Scatter
                     data={patternMarkers}
                     dataKey="price"
                     shape={(props: any) => (
                       <PatternMarkerShape {...props} onHover={handlePatternMarkerHover} onLeave={handlePatternMarkerLeave} />
+                    )}
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
+                )}
+                {hasEmaCrossMarkers && (
+                  <Scatter
+                    data={emaCrossMarkers}
+                    dataKey="value"
+                    shape={(props: any) => (
+                      <CrossMarkerShape {...props} onHover={handleCrossMarkerHover} onLeave={handleCrossMarkerLeave} />
                     )}
                     isAnimationActive={false}
                     legendType="none"
@@ -1846,6 +1998,13 @@ const AppContent = () => {
               point={hoveredPatternMarker.point}
               x={hoveredPatternMarker.x}
               y={hoveredPatternMarker.y}
+            />
+          )}
+          {hoveredCrossMarker && (
+            <CrossTooltip
+              point={hoveredCrossMarker.point}
+              x={hoveredCrossMarker.x}
+              y={hoveredCrossMarker.y}
             />
           )}
 
@@ -1900,6 +2059,17 @@ const AppContent = () => {
                     dot={false}
                     isAnimationActive={false}
                   />
+                  {hasMacdCrossMarkers && (
+                    <Scatter
+                      data={macdCrossMarkers}
+                      dataKey="value"
+                      shape={(props: any) => (
+                        <CrossMarkerShape {...props} onHover={handleCrossMarkerHover} onLeave={handleCrossMarkerLeave} />
+                      )}
+                      isAnimationActive={false}
+                      legendType="none"
+                    />
+                  )}
                 </ComposedChart>
               </ResponsiveContainer>
               )}

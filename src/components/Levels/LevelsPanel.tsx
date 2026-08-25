@@ -5,6 +5,7 @@ import { formatPrice } from '../../utils/formatters';
 import { partitionBySymbol } from '../../utils/bySymbol';
 import { SymbolBadge } from '../SymbolBadge';
 import { PanelSectionHeader } from '../Sidebar/PanelSectionHeader';
+import { CHART_COLORS } from '../../constants/colors';
 
 interface LevelsPanelProps {
   levels: Level[];
@@ -12,21 +13,37 @@ interface LevelsPanelProps {
   multiSymbol: boolean;
 }
 
-const renderRow = (level: Level) => (
-  <TableRow key={level.id}>
-    <TableCell><SymbolBadge symbol={level.symbol} size="small" /></TableCell>
-    <TableCell>
-      <Chip
-        label={level.type}
-        size="small"
-        color={level.type === 'resistance' ? 'error' : 'success'}
-        variant="outlined"
-      />
-    </TableCell>
-    <TableCell align="right">{formatPrice(level.price)}</TableCell>
-    <TableCell>{level.label}</TableCell>
-  </TableRow>
+// Same dashed-line style App.tsx actually draws for this level on the
+// chart (ReferenceLine strokeDasharray="6 3", strokeOpacity={0.5}) —
+// rendered small in the table so a row visually maps to its own line on
+// the chart, not just a same-colored word next to it.
+const LevelLineSwatch = ({ color }: { color: string }) => (
+  <svg width="22" height="10" style={{ flexShrink: 0, display: 'block' }}>
+    <line x1={0} y1={5} x2={22} y2={5} stroke={color} strokeWidth={2} strokeDasharray="6 3" strokeOpacity={0.7} />
+  </svg>
 );
+
+const renderRow = (level: Level) => {
+  const color = level.type === 'resistance' ? CHART_COLORS.priceDown : CHART_COLORS.priceUp;
+  return (
+    <TableRow key={level.id}>
+      <TableCell><SymbolBadge symbol={level.symbol} size="small" /></TableCell>
+      <TableCell>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+          <LevelLineSwatch color={color} />
+          <Chip
+            label={level.type}
+            size="small"
+            color={level.type === 'resistance' ? 'error' : 'success'}
+            variant="outlined"
+          />
+        </Box>
+      </TableCell>
+      <TableCell align="right">{formatPrice(level.price)}</TableCell>
+      <TableCell>{level.label}</TableCell>
+    </TableRow>
+  );
+};
 
 export const LevelsPanel: React.FC<LevelsPanelProps> = ({ levels, currentSymbol, multiSymbol }) => {
   const active = levels.filter((l) => l.active).sort((a, b) => b.price - a.price);
