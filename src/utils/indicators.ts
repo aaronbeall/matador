@@ -6,6 +6,7 @@ import {
   MACD,
   RSI,
   ATR,
+  bollingerbands,
   bullishengulfingpattern,
   bearishengulfingpattern,
   bullishhammerstick,
@@ -25,8 +26,8 @@ import { MACDResult } from '../types/TechnicalIndicators';
 // math is always computed regardless of this list either way (see
 // attachIndicators' doc comment) — this list, and the Indicator type
 // itself, only ever gate what's *offered as a toggle in the UI*.
-export type Indicator = 'vwap' | 'vwapBands' | 'ema9' | 'ema21' | 'sma20' | 'sma50' | 'sma200' | 'macd' | 'rsi' | 'atr14' | 'rvol';
-export const ALL_INDICATORS: Indicator[] = ['vwap', 'vwapBands', 'ema9', 'ema21', 'sma20', 'sma50', 'sma200', 'macd', 'rsi', 'atr14', 'rvol'];
+export type Indicator = 'vwap' | 'vwapBands' | 'ema9' | 'ema21' | 'sma20' | 'sma50' | 'sma200' | 'macd' | 'rsi' | 'atr14' | 'rvol' | 'bollingerBands';
+export const ALL_INDICATORS: Indicator[] = ['vwap', 'vwapBands', 'ema9', 'ema21', 'sma20', 'sma50', 'sma200', 'macd', 'rsi', 'atr14', 'rvol', 'bollingerBands'];
 
 export const calculateVWAP = (candles: Candlestick[]): number[] => {
   if (candles.length === 0) return [];
@@ -143,6 +144,28 @@ export const calculateVWAPBands = (candles: Candlestick[]): VWAPBand[] => {
   });
 };
 
+export interface BollingerBand {
+  middle: number;
+  upper: number;
+  lower: number;
+}
+
+// Standard 20-period/±2σ bands around a simple moving average of close —
+// unlike VWAP bands (calculateVWAPBands above), this isn't day-scoped: it's
+// a plain rolling window over whatever series is passed in, so it works the
+// same way on any timeframe (including 1d/1w, where VWAP bands don't apply
+// at all since there's no intraday session to reset each day). This is the
+// "is price stretched from fair value" reference for swing/any-timeframe
+// reads; VWAP bands stay the intraday-specific one.
+export const calculateBollingerBands = (candles: Candlestick[], period: number = 20, stdDev: number = 2): BollingerBand[] => {
+  if (candles.length === 0) return [];
+  return bollingerbands({
+    period,
+    stdDev,
+    values: candles.map(c => c.close),
+  }).map((r) => ({ middle: r.middle, upper: r.upper, lower: r.lower }));
+};
+
 // Recognized on the most recent bars only (each checker looks at the tail
 // of whatever's passed in) — treat as a confirmation signal alongside a
 // level or trend read, never as a standalone trade trigger.
@@ -192,13 +215,13 @@ export const attachCandlePatterns = (candles: Candlestick[]): Candlestick[] => {
   });
 };
 
-// 'macd'/'vwap'/'vwapBands'/'atr14'/'rvol' are deliberately absent — each
-// is computed and attached through its own dedicated path (see
-// attachIndicators' and annotateTimeframe's special-casing) rather than
-// this generic single-series-per-indicator mechanism, which only fits
+// 'macd'/'vwap'/'vwapBands'/'atr14'/'rvol'/'bollingerBands' are deliberately
+// absent — each is computed and attached through its own dedicated path
+// (see attachIndicators' and annotateTimeframe's special-casing) rather
+// than this generic single-series-per-indicator mechanism, which only fits
 // indicators that produce exactly one number per candle from close price
 // alone.
-const indicatorCalculators: Record<Exclude<Indicator, 'macd' | 'vwap' | 'vwapBands' | 'atr14' | 'rvol'>, (candles: Candlestick[]) => number[]> = {
+const indicatorCalculators: Record<Exclude<Indicator, 'macd' | 'vwap' | 'vwapBands' | 'atr14' | 'rvol' | 'bollingerBands'>, (candles: Candlestick[]) => number[]> = {
   ema9: (candles) => calculateEMA(candles, 9),
   ema21: (candles) => calculateEMA(candles, 21),
   sma20: (candles) => calculateSMA(candles, 20),
@@ -237,6 +260,14 @@ export const attachIndicators = (
         candlesWithIndicators[i + offset].signal = signal;
         candlesWithIndicators[i + offset].histogram = histogram;
       });
+    } else if (indicator === 'bollingerBands') {
+      const bandValues = calculateBollingerBands(candles);
+      const offset = candlesWithIndicators.length - bandValues.length;
+      bandValues.forEach(({ middle, upper, lower }, i) => {
+        candlesWithIndicators[i + offset].bollingerMiddle = middle;
+        candlesWithIndicators[i + offset].bollingerUpper = upper;
+        candlesWithIndicators[i + offset].bollingerLower = lower;
+      });
     } else if (indicator === 'vwap' || indicator === 'vwapBands' || indicator === 'atr14' || indicator === 'rvol') {
       // No-op here — each is computed and attached by annotateTimeframe/
       // attachDailyVWAP directly (see the comment on indicatorCalculators
@@ -253,4 +284,78 @@ export const attachIndicators = (
 
     return candlesWithIndicators;
   }, candles.map((c) => ({ ...c })));
+};
+
+// Bars on each side a candle's high/low must beat to count as a confirmed
+// swing pivot — a standard fractal-style pivot, not a stored indicator, so
+// it only needs a lookback+lookahead window, no warm-up period like EMA/SMA.
+const SWING_WINDOW = 3;
+
+const findSwingHighs = (candles: Candlestick[]): number[] => {
+  const idxs: number[] = [];
+  for (let i = SWING_WINDOW; i < candles.length - SWING_WINDOW; i++) {
+    const window = candles.slice(i - SWING_WINDOW, i + SWING_WINDOW + 1);
+    if (candles[i].high === Math.max(...window.map((c) => c.high))) idxs.push(i);
+  }
+  return idxs;
+};
+
+const findSwingLows = (candles: Candlestick[]): number[] => {
+  const idxs: number[] = [];
+  for (let i = SWING_WINDOW; i < candles.length - SWING_WINDOW; i++) {
+    const window = candles.slice(i - SWING_WINDOW, i + SWING_WINDOW + 1);
+    if (candles[i].low === Math.min(...window.map((c) => c.low))) idxs.push(i);
+  }
+  return idxs;
+};
+
+// Regular RSI divergence, v1 scope (per the approved signals plan): price
+// and RSI disagreeing at consecutive confirmed swings — price makes a
+// higher high while RSI's matching swing is lower (bearish), or price makes
+// a lower low while RSI's matching swing is higher (bullish). Reuses the
+// existing pattern pipeline wholesale rather than being its own overlay:
+// tags the confirming candle's `patterns` array with
+// 'bullish-divergence-rsi'/'bearish-divergence-rsi' (see PATTERN_INFO),
+// which is what lets the Scatter/tooltip/badges/settings-checkbox/
+// find-trades-table machinery already built for candlestick patterns pick
+// these up for free. Must run after RSI (attachIndicators) and after
+// attachCandlePatterns, since it appends onto whatever `patterns` already
+// tagged rather than replacing it.
+export const attachDivergence = (candles: Candlestick[]): Candlestick[] => {
+  if (candles.length < SWING_WINDOW * 2 + 2) return candles;
+
+  const tags = new Map<number, string[]>();
+  const addTag = (index: number, tag: string) => {
+    tags.set(index, [...(tags.get(index) ?? []), tag]);
+  };
+
+  const swingHighs = findSwingHighs(candles);
+  for (let k = 1; k < swingHighs.length; k++) {
+    const i = swingHighs[k - 1];
+    const j = swingHighs[k];
+    const rsiI = candles[i].rsi;
+    const rsiJ = candles[j].rsi;
+    if (rsiI == null || rsiJ == null) continue;
+    if (candles[j].high > candles[i].high && rsiJ < rsiI) {
+      addTag(j, 'bearish-divergence-rsi');
+    }
+  }
+
+  const swingLows = findSwingLows(candles);
+  for (let k = 1; k < swingLows.length; k++) {
+    const i = swingLows[k - 1];
+    const j = swingLows[k];
+    const rsiI = candles[i].rsi;
+    const rsiJ = candles[j].rsi;
+    if (rsiI == null || rsiJ == null) continue;
+    if (candles[j].low < candles[i].low && rsiJ > rsiI) {
+      addTag(j, 'bullish-divergence-rsi');
+    }
+  }
+
+  if (tags.size === 0) return candles;
+  return candles.map((c, i) => {
+    const extra = tags.get(i);
+    return extra ? { ...c, patterns: [...(c.patterns ?? []), ...extra] } : c;
+  });
 };

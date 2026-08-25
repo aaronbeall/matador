@@ -209,6 +209,12 @@ function formatCondition(c: AlertCondition): string {
       return `${c.timeframe} MACD crosses ${c.direction === 'bullish' ? 'above' : 'below'} signal`;
     case 'indicator-threshold':
       return `${c.timeframe} ${c.indicator} crosses ${c.comparator} ${c.value}`;
+    case 'band-cross': {
+      const bandLabel = c.band === 'vwap' ? 'VWAP ±2σ' : 'Bollinger ±2σ';
+      if (c.direction === 'above-upper') return `${c.timeframe} price closes above ${bandLabel} upper band`;
+      if (c.direction === 'below-lower') return `${c.timeframe} price closes below ${bandLabel} lower band`;
+      return `${c.timeframe} price closes back inside ${bandLabel}`;
+    }
   }
 }
 

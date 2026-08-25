@@ -35,6 +35,7 @@ import {
   Refresh as RefreshIcon,
   ShowChart as LineChartIcon,
   CandlestickChart as CandleChartIcon,
+  StackedLineChart as OhlcChartIcon,
   Timer as TimerIcon,
   DateRange as DateRangeIcon,
   ArrowDropUp as ArrowUpIcon,
@@ -132,7 +133,11 @@ import {
 } from './services/dataApi';
 
 type TimeFrame = 'today' | '15m' | '1h' | '3h' | '6h' | '1d' | '1w';
-type ChartMode = 'candles' | 'lines' | 'both';
+// 'price' — just the close line, the plain "line chart" read. 'ohlc' — all
+// four open/high/low/close lines together (the old 'lines' mode, renamed
+// now that 'price' exists as the simpler single-line option). 'all' —
+// candles plus the full OHLC line set (the old 'both').
+type ChartMode = 'candles' | 'price' | 'ohlc' | 'all';
 type SidebarTab = 'watchlist' | 'strategy' | 'thesis' | 'ideas' | 'levels' | 'alerts' | 'journal' | 'portfolio' | 'connections' | 'activity' | 'skills' | 'instructions';
 // Tabs whose "new since last looked" state is worth tracking — Watchlist
 // and Strategy are directly user/Claude-edited, not "arrived" content.
@@ -162,7 +167,7 @@ const SIDEBAR_TAB_STORAGE_KEY = 'matador-sidebar-tab';
 
 const VALID_TIME_INTERVALS: TimeInterval[] = ['1m', '5m', '15m', '1h', '1d', '1w'];
 const VALID_TIME_FRAMES: TimeFrame[] = ['today', '15m', '1h', '3h', '6h', '1d', '1w'];
-const VALID_CHART_MODES: ChartMode[] = ['candles', 'lines', 'both'];
+const VALID_CHART_MODES: ChartMode[] = ['candles', 'price', 'ohlc', 'all'];
 const VALID_SIDEBAR_TABS: SidebarTab[] = ['watchlist', 'strategy', 'thesis', 'ideas', 'levels', 'alerts', 'journal', 'portfolio', 'connections', 'activity', 'skills', 'instructions'];
 
 function readStoredString<T extends string>(key: string, valid: T[], fallback: T): T {
@@ -170,6 +175,11 @@ function readStoredString<T extends string>(key: string, valid: T[], fallback: T
   return valid.includes(stored as T) ? (stored as T) : fallback;
 }
 const STRENGTH_RANK: Record<PatternStrength, number> = { weak: 1, moderate: 2, strong: 3 };
+
+// One calm neutral for the OHLC chart's Open/High/Low lines — see the
+// 'ohlc' chartMode render, where they're told apart by dash pattern
+// rather than each getting its own hue.
+const OHLC_LINE_COLOR = '#90a4ae';
 
 // Settings-menu swatch color per signal — tied to its source indicator's
 // own chart color (ema9's yellow, macd's blue) rather than a new color, so
@@ -440,6 +450,19 @@ const AppContent = () => {
   // invert a pixel position back into a price.
   const [crosshairPrice, setCrosshairPrice] = useState<number | null>(null);
   const priceScaleRef = useRef<{ invert: (y: number) => number } | null>(null);
+  // Recharts' own auto barSize computation (used whenever a <Bar> doesn't
+  // get an explicit one) derives it from the smallest gap between adjacent
+  // data points' raw x-VALUES on a type="number"/scale="time" XAxis — not
+  // from rendered pixels. A single anomalous gap anywhere in the series
+  // (e.g. a live-merged in-progress candle landing a few seconds after the
+  // prior bar, instead of a full interval later) makes that one outlier
+  // the basis for every bar's width, which can round all the way down to 0
+  // px — every candle silently loses its body and only the wick <line>
+  // remains, which is exactly what a dense, live-connected view (Today,
+  // 15m, 1h) can trigger. Tracking the chart's actual rendered width here
+  // and handing the Bar an explicit pixel barSize (see the candlestick
+  // panel below) sidesteps Recharts' data-gap heuristic entirely.
+  const [mainChartWidth, setMainChartWidth] = useState(800);
   // Replaces the old hover-following tooltips: anchored overlay panels
   // (OhlcvLegend/IndicatorLegend) show this candle's values instead — the
   // hovered one if the mouse is over any of the three chart panes (they
@@ -1084,6 +1107,73 @@ const AppContent = () => {
     return [filteredCandles[0].timestamp, filteredCandles[filteredCandles.length - 1].timestamp];
   }, [filteredCandles, timeFrame]);
 
+  // Median gap between consecutive candles' timestamps — shared by
+  // mainBarSize and candleBodyWidth below. Median (not mean/min) because
+  // it's insensitive to a single outlier in either direction: one
+  // anomalously tiny gap (a live-merged in-progress candle a few seconds
+  // after the prior bar, which is what let Recharts' own auto-sizing
+  // collapse to 0px) can't drag it down, and one huge gap (an overnight/
+  // weekend break between trading sessions) can't drag it up.
+  const medianCandleDeltaMs = useMemo(() => {
+    if (filteredCandles.length < 2) return 0;
+    const deltas = filteredCandles.slice(1).map((c, i) => c.timestamp - filteredCandles[i].timestamp).sort((a, b) => a - b);
+    return deltas[Math.floor(deltas.length / 2)];
+  }, [filteredCandles]);
+
+  // Explicit pixel barSize for the candlestick Bar (see its render site
+  // below), applied uniformly across the whole series. Recharts' own
+  // auto-sizing derives width from timestamp gaps directly and degenerates
+  // exactly the way medianCandleDeltaMs above guards against; passing a
+  // fixed number instead makes `props.x`/`props.width` inside
+  // CandlestickBar reliable again — `x + width/2` is a stable, correctly-
+  // spaced center point regardless of local density. It does NOT need to
+  // be locally accurate itself (see candleBodyWidth below for the value
+  // that actually drives visual fill); it only has to be a sane, nonzero
+  // constant Recharts won't collapse.
+  const mainBarSize = useMemo(() => {
+    const domainDuration = xAxisDomain[1] - xAxisDomain[0];
+    if (!(domainDuration > 0) || !(medianCandleDeltaMs > 0)) return Math.max(2, mainChartWidth / Math.max(1, filteredCandles.length));
+    return Math.max(2, (mainChartWidth / domainDuration) * medianCandleDeltaMs);
+  }, [filteredCandles, xAxisDomain, mainChartWidth, medianCandleDeltaMs]);
+
+  // Per-candle pixel width, keyed by timestamp — what actually drives each
+  // body/wick's visual fill (see CandlestickBar's widthByTimestamp prop).
+  // mainBarSize above is one GLOBAL number applied uniformly across the
+  // whole series, but real candle spacing isn't uniform: a multi-day view's
+  // domain spans overnight/weekend gaps with no candles in them at all, so
+  // any single global width is systematically too wide inside the
+  // densely-traded clusters (where real neighbor spacing is much tighter
+  // than the domain-wide average) — bars overlap there even though the
+  // same width looks fine in a sparser stretch. Using each candle's own
+  // actual neighbor gap (averaged across both sides where available) scales
+  // correctly with real local density instead of one span-wide average —
+  // but the candle sitting right next to a real session gap would
+  // otherwise inherit half that gap as "its" width (ballooning to well
+  // over 100px), so any local gap wider than 3x the series' typical
+  // spacing is clamped back down to typical: a real gap should render as
+  // empty space between two normal-width candles, not get absorbed into
+  // one candle's own body.
+  const candleBodyWidth = useMemo(() => {
+    const map = new Map<number, number>();
+    if (filteredCandles.length === 0) return map;
+    const domainDuration = xAxisDomain[1] - xAxisDomain[0];
+    const pxPerMs = domainDuration > 0 ? mainChartWidth / domainDuration : 0;
+    const maxDeltaMs = medianCandleDeltaMs > 0 ? medianCandleDeltaMs * 3 : Infinity;
+    filteredCandles.forEach((c, i) => {
+      const prev = filteredCandles[i - 1];
+      const next = filteredCandles[i + 1];
+      const localDeltaMs = Math.min(
+        maxDeltaMs,
+        prev && next ? (next.timestamp - prev.timestamp) / 2 :
+        next ? next.timestamp - c.timestamp :
+        prev ? c.timestamp - prev.timestamp :
+        0,
+      );
+      map.set(c.timestamp, pxPerMs > 0 && localDeltaMs > 0 ? pxPerMs * localDeltaMs : mainBarSize);
+    });
+    return map;
+  }, [filteredCandles, xAxisDomain, mainChartWidth, mainBarSize, medianCandleDeltaMs]);
+
   // Only the bottom-most rendered panel shows time-axis tick labels — the
   // panels above it keep their gridlines (for alignment) but not the
   // labels, so three stacked charts don't each print their own row of
@@ -1147,6 +1237,27 @@ const AppContent = () => {
   const rsiIndicatorItems: IndicatorLegendItem[] = displayCandle && displayCandle.rsi != null
     ? [{ key: 'rsi', label: 'RSI', value: INDICATOR_DEFS.rsi.format(displayCandle.rsi), color: CHART_COLORS.rsi }]
     : [];
+
+  // "Price is stretched from fair value" — a close outside whichever
+  // mean-reversion band is actually enabled (VWAP's ±2σ takes priority when
+  // both are on, since it's the intraday-specific read; Bollinger is the
+  // any-timeframe fallback). Not its own chart line — same "numeric context
+  // read alongside price" convention as ATR/RVOL in OhlcvLegend, just a
+  // derived boolean instead of a raw field.
+  const stretchInfo: { direction: 'above' | 'below'; band: string } | null = (() => {
+    if (!displayCandle) return null;
+    if (visibleIndicators.includes('vwapBands') && displayCandle.vwapUpper2 != null && displayCandle.vwapLower2 != null) {
+      if (displayCandle.close > displayCandle.vwapUpper2) return { direction: 'above', band: 'VWAP +2σ' };
+      if (displayCandle.close < displayCandle.vwapLower2) return { direction: 'below', band: 'VWAP -2σ' };
+      return null;
+    }
+    if (visibleIndicators.includes('bollingerBands') && displayCandle.bollingerUpper != null && displayCandle.bollingerLower != null) {
+      if (displayCandle.close > displayCandle.bollingerUpper) return { direction: 'above', band: 'Bollinger +2σ' };
+      if (displayCandle.close < displayCandle.bollingerLower) return { direction: 'below', band: 'Bollinger -2σ' };
+      return null;
+    }
+    return null;
+  })();
 
   // Hover-only, unlike displayCandle's OHLCV/indicator readouts which fall
   // back to the latest candle — a persistent "Doji" badge for whatever the
@@ -1474,16 +1585,21 @@ const AppContent = () => {
                   <CandleChartIcon />
                 </ToggleButton>
               </MuiTooltip>
-              <MuiTooltip title="Line Chart">
-                <ToggleButton value="lines">
+              <MuiTooltip title="Line Chart — just the close price">
+                <ToggleButton value="price">
                   <LineChartIcon />
                 </ToggleButton>
               </MuiTooltip>
-              <MuiTooltip title="Both">
-                <ToggleButton value="both">
+              <MuiTooltip title="OHLC Line Chart — open, high, low, and close lines">
+                <ToggleButton value="ohlc">
+                  <OhlcChartIcon />
+                </ToggleButton>
+              </MuiTooltip>
+              <MuiTooltip title="All — candles plus OHLC lines">
+                <ToggleButton value="all">
                   <Box sx={{ display: 'flex', gap: 0 }}>
                     <CandleChartIcon />
-                    <LineChartIcon />
+                    <OhlcChartIcon />
                   </Box>
                 </ToggleButton>
               </MuiTooltip>
@@ -1679,7 +1795,7 @@ const AppContent = () => {
           <Box sx={{ flexGrow: 1, minHeight: '60%', position: 'relative' }}>
             {displayCandle && (
               <Box sx={{ position: 'absolute', top: 8, left: 8, zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.5 }}>
-                <OhlcvLegend candle={displayCandle} indicators={indicators} />
+                <OhlcvLegend candle={displayCandle} indicators={indicators} stretched={stretchInfo} />
                 <IndicatorLegend items={mainIndicatorItems} />
                 <PatternBadges patterns={displayPatterns} />
               </Box>
@@ -1689,7 +1805,7 @@ const AppContent = () => {
                 <Typography variant="body2" color="text.secondary">No data for this range yet</Typography>
               </Box>
             ) : (
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" onResize={(w) => setMainChartWidth(w)}>
               <ComposedChart
                 data={filteredCandles}
                 onMouseMove={(state: any) => {
@@ -1796,22 +1912,40 @@ const AppContent = () => {
                     }}
                   />
                 ))}
-                {(chartMode === 'candles' || chartMode === 'both') && (
+                {(chartMode === 'candles' || chartMode === 'all') && (
                   <Bar
                     dataKey={d => [d.low, d.high]}
-                    shape={<CandlestickBar maxVolume={Math.max(...candles.map(c => c.volume))} />}
+                    shape={<CandlestickBar maxVolume={Math.max(...candles.map(c => c.volume))} widthByTimestamp={candleBodyWidth} />}
                     name="Range"
+                    isAnimationActive={false}
+                    barSize={mainBarSize}
+                  />
+                )}
+                {chartMode === 'price' && (
+                  <Line
+                    type="linear"
+                    dataKey="close"
+                    stroke={isPriceUp(candles) ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
+                    strokeWidth={3}
+                    dot={false}
+                    name="Close"
                     isAnimationActive={false}
                   />
                 )}
-                {(chartMode === 'lines' || chartMode === 'both') && (
+                {(chartMode === 'ohlc' || chartMode === 'all') && (
                   <>
+                    {/* Open/High/Low are supporting context, not each their
+                        own headline color — one calm neutral hue for all
+                        three, told apart by dash pattern (not hue) so Close
+                        (still the real green/red focal line below) stays
+                        the one thing your eye actually locks onto. */}
                     <Line
                       type="linear"
                       dataKey="open"
-                      stroke={CHART_COLORS.open}
+                      stroke={OHLC_LINE_COLOR}
+                      strokeOpacity={0.45}
                       strokeWidth={1}
-                      strokeDasharray="3 3"
+                      strokeDasharray="2 3"
                       dot={false}
                       name="Open"
                       isAnimationActive={false}
@@ -1819,9 +1953,10 @@ const AppContent = () => {
                     <Line
                       type="linear"
                       dataKey="high"
-                      stroke={CHART_COLORS.high}
+                      stroke={OHLC_LINE_COLOR}
+                      strokeOpacity={0.65}
                       strokeWidth={1}
-                      strokeDasharray="3 3"
+                      strokeDasharray="5 2"
                       dot={false}
                       name="High"
                       isAnimationActive={false}
@@ -1829,9 +1964,10 @@ const AppContent = () => {
                     <Line
                       type="linear"
                       dataKey="low"
-                      stroke={CHART_COLORS.low}
+                      stroke={OHLC_LINE_COLOR}
+                      strokeOpacity={0.65}
                       strokeWidth={1}
-                      strokeDasharray="3 3"
+                      strokeDasharray="2 5"
                       dot={false}
                       name="Low"
                       isAnimationActive={false}
@@ -1903,6 +2039,44 @@ const AppContent = () => {
                       strokeWidth={1}
                       dot={false}
                       name="VWAP -2σ"
+                      isAnimationActive={false}
+                    />
+                  </>
+                )}
+                {visibleIndicators.includes('bollingerBands') && (
+                  <>
+                    <Line
+                      key="bollingerUpper"
+                      type="monotone"
+                      dataKey="bollingerUpper"
+                      stroke={CHART_COLORS.bollingerBands}
+                      strokeOpacity={0.5}
+                      strokeWidth={1}
+                      dot={false}
+                      name="Bollinger +2σ"
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      key="bollingerMiddle"
+                      type="monotone"
+                      dataKey="bollingerMiddle"
+                      stroke={CHART_COLORS.bollingerBands}
+                      strokeOpacity={0.3}
+                      strokeWidth={1}
+                      strokeDasharray="4 3"
+                      dot={false}
+                      name="Bollinger SMA(20)"
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      key="bollingerLower"
+                      type="monotone"
+                      dataKey="bollingerLower"
+                      stroke={CHART_COLORS.bollingerBands}
+                      strokeOpacity={0.5}
+                      strokeWidth={1}
+                      dot={false}
+                      name="Bollinger -2σ"
                       isAnimationActive={false}
                     />
                   </>

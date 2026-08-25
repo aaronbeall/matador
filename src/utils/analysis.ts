@@ -7,6 +7,7 @@ import {
   calculateRVOL,
   attachIndicators,
   attachCandlePatterns,
+  attachDivergence,
 } from './indicators';
 
 const FULL_CONFIDENCE_BARS = 30; // enough for all indicators (MACD needs the most: ~26+9)
@@ -121,7 +122,7 @@ export function annotateTimeframe(candles: Candlestick[], opts: { intraday: bool
 
   if (opts.intraday) annotated = attachDailyVWAP(annotated);
 
-  return attachCandlePatterns(annotated);
+  return attachDivergence(attachCandlePatterns(annotated));
 }
 
 export function isIntraday(interval: TimeInterval): boolean {

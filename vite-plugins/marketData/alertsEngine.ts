@@ -74,6 +74,28 @@ export function evaluateCondition(condition: AlertCondition, candles: Candlestic
         ? prevValue <= condition.value && currValue > condition.value
         : prevValue >= condition.value && currValue < condition.value;
     }
+
+    case 'band-cross': {
+      const upper = condition.band === 'vwap' ? 'vwapUpper2' : 'bollingerUpper';
+      const lower = condition.band === 'vwap' ? 'vwapLower2' : 'bollingerLower';
+      const prevUpper = prev[upper];
+      const prevLower = prev[lower];
+      const currUpper = curr[upper];
+      const currLower = curr[lower];
+      if (prevUpper == null || prevLower == null || currUpper == null || currLower == null) return false;
+
+      if (condition.direction === 'above-upper') {
+        return prev.close <= prevUpper && curr.close > currUpper;
+      }
+      if (condition.direction === 'below-lower') {
+        return prev.close >= prevLower && curr.close < currLower;
+      }
+      // 'back-inside' — was stretched outside either band on the prior
+      // candle, has snapped back within both on this one.
+      const prevOutside = prev.close > prevUpper || prev.close < prevLower;
+      const currInside = curr.close <= currUpper && curr.close >= currLower;
+      return prevOutside && currInside;
+    }
   }
 }
 

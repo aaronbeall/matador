@@ -14,21 +14,40 @@ const MAX_GAP = 3;
 const GAP_RATIO = 0.25;
 
 export const CandlestickBar = (props: any) => {
-  const { x, y, width, height, payload, background } = props;
+  const { x, y, width, height, payload, background, widthByTimestamp } = props;
 
   const isBullish = payload.close > payload.open;
   const color = isBullish ? CHART_COLORS.priceUp : CHART_COLORS.priceDown;
 
-  const gap = Math.min(width * GAP_RATIO, MAX_GAP);
-  const bodyWidth = Math.max(MIN_BODY_WIDTH, width - gap);
-  const bodyX = x + (width - bodyWidth) / 2;
+  // `width` here is one GLOBAL size Recharts applies uniformly to every bar
+  // (see mainBarSize in App.tsx) — reliable for centering (x + width/2 is
+  // always correctly spaced), but real candle density isn't uniform across
+  // a chart whose domain spans non-trading gaps, so using it directly for
+  // the visual fill overlaps neighboring bodies wherever local spacing is
+  // tighter than the domain-wide average. widthByTimestamp carries each
+  // candle's own actual local slot width (see App.tsx) for that purpose;
+  // `width` stays the fallback for a still-loading/unmapped candle only.
+  const slotWidth = widthByTimestamp?.get(payload.timestamp) ?? width;
+
+  const gap = Math.min(slotWidth * GAP_RATIO, MAX_GAP);
+  const bodyWidth = Math.max(MIN_BODY_WIDTH, slotWidth - gap);
   const centerX = x + width / 2;
+  const bodyX = centerX - bodyWidth / 2;
 
   // Calculate price coordinates (use full height for price)
-  const yScale = height / (props.high - props.low);
+  // A candle with zero range (high === low — a thin-volume bar where every
+  // trade printed at the same price, common pre/after-hours) would divide
+  // by zero here and hand Recharts NaN y-coordinates, which silently drops
+  // the body <rect> entirely and leaves only the wick <line> — collapsing
+  // the whole candle down to what looks like "just a line, not filled."
+  // Falling back to a flat line at yOffset (open/high/low/close all equal,
+  // so every getY() call below should land on the same pixel) is the
+  // correct render for a real zero-range bar, not just a guard.
+  const range = props.high - props.low;
+  const yScale = range > 0 ? height / range : 0;
   const yOffset = y + height;
 
-  const getY = (value: number) => yOffset - (value - props.low) * yScale;
+  const getY = (value: number) => (range > 0 ? yOffset - (value - props.low) * yScale : yOffset);
 
   // Wick coordinates
   const wickTop = getY(payload.high);

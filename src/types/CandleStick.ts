@@ -31,6 +31,13 @@ export type Candlestick = {
   vwapLower1?: number;
   vwapUpper2?: number;
   vwapLower2?: number;
+  // Bollinger Bands — unlike VWAP bands, not day-scoped (a plain rolling
+  // window over close), so it works on any timeframe including 1d/1w.
+  // Rendered as part of the 'bollingerBands' toggle, same convention as
+  // vwap's bands being folded into a single indicator entry above.
+  bollingerMiddle?: number;
+  bollingerUpper?: number;
+  bollingerLower?: number;
 } & {
   [K in Indicator]?: number;
 }

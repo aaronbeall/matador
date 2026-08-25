@@ -26,7 +26,14 @@ export type AlertCondition =
       direction: 'bullish' | 'bearish';
     }
   | { kind: 'macd-crosses-signal'; timeframe: TimeInterval; direction: 'bullish' | 'bearish' }
-  | { kind: 'indicator-threshold'; timeframe: TimeInterval; indicator: 'rsi14' | 'atr14'; comparator: 'above' | 'below'; value: number };
+  | { kind: 'indicator-threshold'; timeframe: TimeInterval; indicator: 'rsi14' | 'atr14'; comparator: 'above' | 'below'; value: number }
+  // Mean-reversion / "stretched" signal — close crossing outside (or back
+  // inside) a mean-reversion band's ±2σ envelope. 'vwap' is intraday-only
+  // (day-scoped, same requirement as vwap itself); 'bollinger' works on any
+  // timeframe. A dedicated kind rather than folding into indicator-threshold
+  // since a band's upper/lower are per-candle computed values, not one
+  // static number to compare against.
+  | { kind: 'band-cross'; timeframe: TimeInterval; band: 'vwap' | 'bollinger'; direction: 'above-upper' | 'below-lower' | 'back-inside' };
 
 export type AlertSeverity = 'watch' | 'action';
 

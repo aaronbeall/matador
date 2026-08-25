@@ -1,4 +1,4 @@
-import { Box, Typography } from '@mui/material';
+import { Box, Chip, Typography } from '@mui/material';
 import { Candlestick } from '../types/Candlestick';
 import { Indicator } from '../utils/indicators';
 import { CHART_COLORS } from '../constants/colors';
@@ -15,7 +15,12 @@ import { ChartOverlayPanel } from './ChartOverlayPanel';
 // they're numeric context read alongside price, not an overlay. Still
 // gated by `indicators` like everything else so they're configurable, not
 // unconditionally on.
-export const OhlcvLegend = ({ candle, indicators }: { candle: Candlestick; indicators: Indicator[] }) => {
+interface StretchInfo {
+  direction: 'above' | 'below';
+  band: string;
+}
+
+export const OhlcvLegend = ({ candle, indicators, stretched }: { candle: Candlestick; indicators: Indicator[]; stretched?: StretchInfo | null }) => {
   const color = candle.close >= candle.open ? CHART_COLORS.priceUp : CHART_COLORS.priceDown;
   const fields: [string, string][] = [
     ['O', formatPrice(candle.open)],
@@ -39,6 +44,20 @@ export const OhlcvLegend = ({ candle, indicators }: { candle: Candlestick; indic
             <Typography variant="caption" sx={{ color, fontWeight: 700 }}>{value}</Typography>
           </Box>
         ))}
+        {stretched && (
+          <Chip
+            size="small"
+            label={`Stretched ${stretched.direction} ${stretched.band}`}
+            sx={{
+              height: 18,
+              fontSize: '0.65rem',
+              fontWeight: 700,
+              bgcolor: stretched.direction === 'above' ? CHART_COLORS.priceUp : CHART_COLORS.priceDown,
+              color: '#fff',
+              '& .MuiChip-label': { px: 0.75 },
+            }}
+          />
+        )}
       </Box>
     </ChartOverlayPanel>
   );

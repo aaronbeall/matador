@@ -1,7 +1,4 @@
 export const CHART_COLORS = {
-  open: '#2196f3',    // Blue
-  high: '#4caf50',    // Green
-  low: '#f44336',     // Red
   close: '#9c27b0',   // Purple
   volume: '#ff9800',  // Orange
   bar: 'rgba(128, 128, 128, 0.2)',  // Gray (transparent)
@@ -20,4 +17,5 @@ export const CHART_COLORS = {
   vwapBands: '#ff00ff',         // same family as vwap — bands are its envelope
   atr14: '#00bcd4',             // Cyan
   rvol: '#ffc107',              // Amber
+  bollingerBands: '#26c6da',    // Teal — distinct from VWAP's magenta family
 };

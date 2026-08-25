@@ -86,6 +86,13 @@ export const INDICATOR_DEFS: Record<Indicator, {
     description: "This bar's volume vs. its trailing 20-bar average. Shown in the OHLCV readout.",
     why: 'Useful for confirming a breakout/breakdown has real participation behind it, not just a quiet drift.',
     format: (v: number) => `${v.toFixed(2)}x`
+  },
+  bollingerBands: {
+    id: 'bollingerBands',
+    name: 'Bollinger Bands',
+    description: '20-period SMA ±2σ bands around close — unlike VWAP Bands, not session-scoped, so it works on any timeframe.',
+    why: 'The swing/any-timeframe read on how stretched price is from fair value — a close outside the bands is statistically unusual for the lookback.',
+    format: formatPrice
   }
 };
 

@@ -50,8 +50,14 @@ On-demand only — there is no scheduled/cron version of this yet.
    `1m`/`5m`/`15m`, resetting each trading day; `vwapU1`/`vwapL1` are the
    ±1σ volume-weighted bands around vwap — price outside them is
    statistically stretched for the session) and `patterns` (any
-   candlestick pattern detected on that specific candle). It's
-   partitioned so you only ever have to load what a given read actually
+   candlestick pattern detected on that specific candle, now including
+   `bullish-divergence-rsi`/`bearish-divergence-rsi` — price making a new
+   swing high/low while RSI's matching swing disagrees, tagged on the
+   confirming candle). A Bollinger Bands (20-period SMA ±2σ) overlay is
+   also available in the chart UI as the any-timeframe equivalent of the
+   VWAP bands above — not a separate printed column here, since `vwap`
+   already covers the intraday stretched-price read this table needs.
+   It's partitioned so you only ever have to load what a given read actually
    needs, not one giant file:
    ```
    data/candles/<SYMBOL>/1m/<YYYY-MM-DD>.md    one file per trading day
@@ -88,10 +94,13 @@ On-demand only — there is no scheduled/cron version of this yet.
      wicked into and rejected from is real structure; a single extreme
      print usually isn't.
    - **Pattern context** — a `patterns` tag (doji, engulfing, hammer,
-     morning/evening star, shooting star) means something in light of
-     *where it sits* — at a level you already identified, after a
-     multi-row pullback, at an EMA cross — not on its own. Never treat a
-     tag alone as a trade trigger.
+     morning/evening star, shooting star, or one of the RSI divergence
+     tags) means something in light of *where it sits* — at a level you
+     already identified, after a multi-row pullback, at an EMA cross —
+     not on its own. Never treat a tag alone as a trade trigger. A
+     divergence tag in particular is only as good as the two swings it's
+     comparing — check both actually sit at meaningful highs/lows, not a
+     noisy 3-bar wiggle either side of the pivot window.
    - **Cross-timeframe synthesis — the actual reason to pull more than one
      timeframe's history, not just orient off `latest.md`.** A level or
      trend that agrees across `1h` and `1d` (or further, `1w`) is

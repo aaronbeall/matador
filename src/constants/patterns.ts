@@ -75,4 +75,18 @@ export const PATTERN_INFO: Record<string, PatternInfo> = {
     description: 'Small body near the bottom of the range with a long upper wick, after an advance.',
     why: 'Shows rejection of higher prices — wants confirmation from the next bar, more meaningful at a tested resistance level.',
   },
+  'bullish-divergence-rsi': {
+    label: 'Bullish RSI Divergence',
+    direction: 'bullish',
+    strength: 'strong',
+    description: "Price prints a lower swing low while RSI's matching swing is higher — momentum disagrees with the new price low.",
+    why: 'A classic exhaustion signal on a decline — the sellers pushing price to a new low are doing it with less underlying force than last time, often ahead of a bounce or reversal.',
+  },
+  'bearish-divergence-rsi': {
+    label: 'Bearish RSI Divergence',
+    direction: 'bearish',
+    strength: 'strong',
+    description: "Price prints a higher swing high while RSI's matching swing is lower — momentum disagrees with the new price high.",
+    why: 'A classic exhaustion signal on an advance — the buyers pushing price to a new high are doing it with less underlying force than last time, often ahead of a stall or reversal.',
+  },
 };

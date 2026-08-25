@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography, Chip } from '@mui/material';
+import { Box, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
 import { Level } from '../../types/Level';
 import { formatPrice } from '../../utils/formatters';
 import { partitionBySymbol } from '../../utils/bySymbol';
@@ -15,11 +15,11 @@ interface LevelsPanelProps {
 
 // Same dashed-line style App.tsx actually draws for this level on the
 // chart (ReferenceLine strokeDasharray="6 3", strokeOpacity={0.5}) —
-// rendered small in the table so a row visually maps to its own line on
-// the chart, not just a same-colored word next to it.
+// rendered full-width in the table so a row visually maps to its own line
+// on the chart, not just a same-colored word next to it.
 const LevelLineSwatch = ({ color }: { color: string }) => (
-  <svg width="22" height="10" style={{ flexShrink: 0, display: 'block' }}>
-    <line x1={0} y1={5} x2={22} y2={5} stroke={color} strokeWidth={2} strokeDasharray="6 3" strokeOpacity={0.7} />
+  <svg width="100%" height="10" style={{ display: 'block' }}>
+    <line x1="0" y1="5" x2="100%" y2="5" stroke={color} strokeWidth={2} strokeDasharray="6 3" strokeOpacity={0.7} />
   </svg>
 );
 
@@ -29,14 +29,11 @@ const renderRow = (level: Level) => {
     <TableRow key={level.id}>
       <TableCell><SymbolBadge symbol={level.symbol} size="small" /></TableCell>
       <TableCell>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, width: '100%' }}>
+          <Typography variant="caption" sx={{ color, textTransform: 'capitalize', fontWeight: 600, lineHeight: 1 }}>
+            {level.type}
+          </Typography>
           <LevelLineSwatch color={color} />
-          <Chip
-            label={level.type}
-            size="small"
-            color={level.type === 'resistance' ? 'error' : 'success'}
-            variant="outlined"
-          />
         </Box>
       </TableCell>
       <TableCell align="right">{formatPrice(level.price)}</TableCell>
