@@ -34,6 +34,9 @@ const JSON_COLLECTIONS: Record<string, string> = {
   alerts: 'alerts.json',
   'analysis-log': 'analysis-log.json',
   thesis: 'thesis.json',
+  journal: 'journal.json',
+  'portfolio-positions': 'portfolio-positions.json',
+  'portfolio-balances': 'portfolio-balances.json',
 };
 
 function ensureDataFiles() {

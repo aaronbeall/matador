@@ -48,6 +48,8 @@ import {
   Notifications as AlertsIcon,
   History as ActivityIcon,
   Extension as SkillsIcon,
+  AutoStories as JournalIcon,
+  AccountBalanceWallet as PortfolioIcon,
   NotificationsActive as NotificationsOnIcon,
   NotificationsOff as NotificationsOffIcon,
   ChevronRight as CollapseIcon,
@@ -60,6 +62,7 @@ import {
   ComposedChart, Line, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Bar, ReferenceLine, Customized, Scatter
 } from 'recharts';
 import { Logo } from './components/Logo';
+import { SymbolBadge } from './components/SymbolBadge';
 import { Indicator, ALL_INDICATORS } from './utils/indicators';
 import { CandlestickBar } from './components/CandlestickBar';
 import { OhlcvLegend } from './components/OhlcvLegend';
@@ -71,7 +74,7 @@ import { getPatternColor } from './components/PatternVisuals';
 import { computeAutoLevels } from './utils/autoLevels';
 import { CHART_COLORS } from './constants/colors';
 import { PATTERN_INFO, PatternStrength } from './constants/patterns';
-import { formatPrice, formatVolume, formatDelta, formatPercent } from './utils/formatters';
+import { formatPrice, formatVolume, formatDelta, formatPercent, formatTimestamp } from './utils/formatters';
 import { INDICATOR_DEFS } from './constants/indicators';
 import { MACDHistogramBar } from './components/MACDHistogramBar';
 import { WatchlistPanel } from './components/Watchlist/WatchlistPanel';
@@ -82,6 +85,8 @@ import { LevelsPanel } from './components/Levels/LevelsPanel';
 import { AlertsPanel } from './components/Alerts/AlertsPanel';
 import { ActivityPanel } from './components/Activity/ActivityPanel';
 import { SkillsPanel } from './components/Skills/SkillsPanel';
+import { JournalPanel } from './components/Journal/JournalPanel';
+import { PortfolioPanel } from './components/Portfolio/PortfolioPanel';
 import { SidebarNav, SidebarNavItem } from './components/Sidebar/SidebarNav';
 import { SkillTip } from './components/Sidebar/SkillTip';
 import { ConnectionDiagnostics } from './components/ConnectionDiagnostics/ConnectionDiagnostics';
@@ -92,6 +97,8 @@ import { Alert as AlertType } from './types/Alert';
 import { AnalysisLogEntry } from './types/AnalysisLog';
 import { Thesis } from './types/Thesis';
 import { Skill } from './types/Skill';
+import { JournalEntry } from './types/Journal';
+import { Position, AccountBalance } from './types/Portfolio';
 import {
   getWatchlist,
   saveWatchlist,
@@ -104,16 +111,19 @@ import {
   saveAlerts,
   getAnalysisLog,
   getSkills,
+  getJournal,
+  getPortfolioPositions,
+  getAccountBalances,
   rebuildMarketData,
   subscribeToDataEvents,
 } from './services/dataApi';
 
 type TimeFrame = '15m' | '1h' | '3h' | '6h' | '1d' | '1w';
 type ChartMode = 'candles' | 'lines' | 'both';
-type SidebarTab = 'watchlist' | 'strategy' | 'thesis' | 'ideas' | 'levels' | 'alerts' | 'activity' | 'skills';
+type SidebarTab = 'watchlist' | 'strategy' | 'thesis' | 'ideas' | 'levels' | 'alerts' | 'journal' | 'portfolio' | 'activity' | 'skills';
 // Tabs whose "new since last looked" state is worth tracking — Watchlist
 // and Strategy are directly user/Claude-edited, not "arrived" content.
-const TRACKED_TABS: SidebarTab[] = ['thesis', 'ideas', 'levels', 'activity'];
+const TRACKED_TABS: SidebarTab[] = ['thesis', 'ideas', 'levels', 'journal', 'portfolio', 'activity'];
 const LAST_SEEN_STORAGE_KEY = 'matador-sidebar-last-seen';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'matador-sidebar-width';
 const SIDEBAR_DEFAULT_WIDTH = 420;
@@ -136,7 +146,7 @@ const SIDEBAR_TAB_STORAGE_KEY = 'matador-sidebar-tab';
 const VALID_TIME_INTERVALS: TimeInterval[] = ['1m', '5m', '15m', '1h', '1d', '1w'];
 const VALID_TIME_FRAMES: TimeFrame[] = ['15m', '1h', '3h', '6h', '1d', '1w'];
 const VALID_CHART_MODES: ChartMode[] = ['candles', 'lines', 'both'];
-const VALID_SIDEBAR_TABS: SidebarTab[] = ['watchlist', 'strategy', 'thesis', 'ideas', 'levels', 'alerts', 'activity', 'skills'];
+const VALID_SIDEBAR_TABS: SidebarTab[] = ['watchlist', 'strategy', 'thesis', 'ideas', 'levels', 'alerts', 'journal', 'portfolio', 'activity', 'skills'];
 
 function readStoredString<T extends string>(key: string, valid: T[], fallback: T): T {
   const stored = localStorage.getItem(key);
@@ -378,6 +388,9 @@ const AppContent = () => {
   const [levels, setLevels] = useState<LevelType[]>([]);
   const [alerts, setAlerts] = useState<AlertType[]>([]);
   const [analysisLog, setAnalysisLog] = useState<AnalysisLogEntry[]>([]);
+  const [journal, setJournal] = useState<JournalEntry[]>([]);
+  const [portfolioPositions, setPortfolioPositions] = useState<Position[]>([]);
+  const [accountBalances, setAccountBalances] = useState<AccountBalance[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [analysisDataUpdatedAt, setAnalysisDataUpdatedAt] = useState<Date | null>(null);
 
@@ -410,7 +423,7 @@ const AppContent = () => {
     if (sidebarOpen && TRACKED_TABS.includes(sidebarTab)) {
       setLastSeenAt((prev) => ({ ...prev, [sidebarTab]: new Date().toISOString() }));
     }
-  }, [sidebarOpen, sidebarTab, thesis, tradeIdeas, levels, analysisLog]);
+  }, [sidebarOpen, sidebarTab, thesis, tradeIdeas, levels, journal, portfolioPositions, analysisLog]);
 
   const thesisNewCount = thesis.filter((t) => t.updatedAt > (lastSeenAt.thesis ?? '')).length;
   const ideasNewCount = tradeIdeas.filter(
@@ -420,7 +433,17 @@ const AppContent = () => {
     (l) => l.active && l.createdAt > (lastSeenAt.levels ?? '')
   ).length;
   const alertsUnacknowledgedCount = alerts.filter((a) => !a.acknowledged).length;
+  const journalNewCount = journal.filter((e) => e.timestamp > (lastSeenAt.journal ?? '')).length;
+  const portfolioNewCount = portfolioPositions.filter(
+    (p) => (p.exitAt ?? p.entryAt) > (lastSeenAt.portfolio ?? '')
+  ).length;
   const activityNewCount = analysisLog.filter((e) => e.timestamp > (lastSeenAt.activity ?? '')).length;
+
+  // Whether it's worth labeling "current symbol" vs. "other watchlist
+  // symbols" sections at all — with only one active symbol there's
+  // nothing to distinguish, so panels that group by symbol (Levels) skip
+  // the section header entirely rather than labeling a group of one.
+  const multiSymbol = watchlist.filter((w) => w.active).length > 1;
 
   const sidebarNavItems: SidebarNavItem[] = [
     { value: 'watchlist', label: 'Watchlist', icon: <WatchlistIcon /> },
@@ -429,6 +452,8 @@ const AppContent = () => {
     { value: 'ideas', label: 'Ideas', icon: <IdeasIcon />, badgeCount: ideasNewCount },
     { value: 'levels', label: 'Levels', icon: <LevelsIcon />, badgeCount: levelsNewCount },
     { value: 'alerts', label: 'Alerts', icon: <AlertsIcon />, badgeCount: alertsUnacknowledgedCount },
+    { value: 'journal', label: 'Journal', icon: <JournalIcon />, badgeCount: journalNewCount },
+    { value: 'portfolio', label: 'Portfolio', icon: <PortfolioIcon />, badgeCount: portfolioNewCount },
     { value: 'activity', label: 'Activity', icon: <ActivityIcon />, badgeCount: activityNewCount },
     { value: 'skills', label: 'Skills', icon: <SkillsIcon /> },
   ];
@@ -560,6 +585,15 @@ const AppContent = () => {
     if (!only || only === 'analysis-log') {
       tasks.push(getAnalysisLog().then(setAnalysisLog).catch(() => {}));
     }
+    if (!only || only === 'journal') {
+      tasks.push(getJournal().then(setJournal).catch(() => {}));
+    }
+    if (!only || only === 'portfolio-positions') {
+      tasks.push(getPortfolioPositions().then(setPortfolioPositions).catch(() => {}));
+    }
+    if (!only || only === 'portfolio-balances') {
+      tasks.push(getAccountBalances().then(setAccountBalances).catch(() => {}));
+    }
     if (!only || only === 'skills') {
       tasks.push(getSkills().then(setSkills).catch(() => {}));
     }
@@ -631,9 +665,18 @@ const AppContent = () => {
       }
     }
 
-    // First run: remember every alert already triggered on disk without
-    // notifying for them — only genuinely new triggers after this point
-    // should pop.
+    // Wait for the initial load to actually land before establishing the
+    // "already seen" baseline. `alerts` starts as `[]` until
+    // refreshAnalysisData's first fetch resolves — seeding the baseline
+    // from that empty snapshot instead of the real one meant every
+    // already-triggered, unacknowledged alert on disk got treated as
+    // brand new the instant real data arrived, notifying for all of them
+    // at once on every single page load.
+    if (!analysisDataUpdatedAt) return;
+
+    // First run (now against real data): remember every alert already
+    // triggered on disk without notifying for them — only genuinely new
+    // triggers after this point should pop.
     if (notifiedAlertIds.current === null) {
       notifiedAlertIds.current = new Set(alerts.filter((a) => a.status === 'triggered').map((a) => a.id));
       return;
@@ -647,7 +690,12 @@ const AppContent = () => {
       notifiedAlertIds.current.add(alert.id);
 
       const notification = new Notification(`Matador · ${alert.symbol}`, {
-        body: alert.headline,
+        // Triggered time leads, so it's the first thing visible in the
+        // popup — you shouldn't have to open it to tell whether this is
+        // fresh or something from hours ago.
+        body: alert.triggeredAt
+          ? `Triggered ${formatTimestamp(alert.triggeredAt)}\n${alert.headline}`
+          : alert.headline,
         tag: alert.id,
       });
       notification.onclick = () => {
@@ -657,7 +705,7 @@ const AppContent = () => {
       };
       openNotifications.current.set(alert.id, notification);
     }
-  }, [alerts, notificationsEnabled]);
+  }, [alerts, notificationsEnabled, analysisDataUpdatedAt]);
 
   const handleToggleNotifications = useCallback(async () => {
     if (notificationsEnabled) {
@@ -1053,9 +1101,7 @@ const AppContent = () => {
           </Alert>
         )}
         <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, mb: 1.5, flexWrap: 'wrap' }}>
-          <Typography variant="h4" sx={{ fontWeight: 700, letterSpacing: 0.5 }}>
-            {symbol}
-          </Typography>
+          <SymbolBadge symbol={symbol} size="large" />
           {(connectionState === 'connecting' || currentPriceValue == null) ? (
             <Skeleton variant="text" width={100} sx={{ fontSize: '1.5rem' }} />
           ) : (
@@ -1708,7 +1754,7 @@ const AppContent = () => {
                     analysis or a prediction, no skill needed. Distinct from Ideas (a concrete trade
                     proposal) and Alerts (a one-shot trigger) — this is the running "why" behind them.
                   </SkillTip>
-                  <ThesisPanel thesis={thesis} currentSymbol={symbol} />
+                  <ThesisPanel thesis={thesis} currentSymbol={symbol} multiSymbol={multiSymbol} />
                 </>
               )}
               {sidebarTab === 'ideas' && (
@@ -1717,7 +1763,7 @@ const AppContent = () => {
                     Populated by the <code>find-trades</code> skill — ask Claude to "scan for trades" or run{' '}
                     <code>/find-trades</code>.
                   </SkillTip>
-                  <IdeasPanel ideas={tradeIdeas} lastUpdated={analysisDataUpdatedAt} currentSymbol={symbol} />
+                  <IdeasPanel ideas={tradeIdeas} lastUpdated={analysisDataUpdatedAt} currentSymbol={symbol} multiSymbol={multiSymbol} />
                 </>
               )}
               {sidebarTab === 'levels' && (
@@ -1726,7 +1772,7 @@ const AppContent = () => {
                     Also written by <code>find-trades</code> — support/resistance levels get flagged even when no
                     trade idea qualifies.
                   </SkillTip>
-                  <LevelsPanel levels={levels} currentSymbol={symbol} />
+                  <LevelsPanel levels={levels} currentSymbol={symbol} multiSymbol={multiSymbol} />
                 </>
               )}
               {sidebarTab === 'alerts' && (
@@ -1736,7 +1782,27 @@ const AppContent = () => {
                     level. Enable the bell icon (top right) for real desktop notifications on new ones. Acknowledging
                     one here doesn't need a skill.
                   </SkillTip>
-                  <AlertsPanel alerts={alerts} currentSymbol={symbol} onAcknowledge={handleAcknowledgeAlert} />
+                  <AlertsPanel alerts={alerts} onAcknowledge={handleAcknowledgeAlert} />
+                </>
+              )}
+              {sidebarTab === 'journal' && (
+                <>
+                  <SkillTip>
+                    Freeform notes worth remembering, plus Claude's own self-graded reviews of past thesis/
+                    alert calls against what actually happened. No skill run needed. For real trades and
+                    account balance, see Portfolio instead.
+                  </SkillTip>
+                  <JournalPanel journal={journal} />
+                </>
+              )}
+              {sidebarTab === 'portfolio' && (
+                <>
+                  <SkillTip>
+                    Actual account state only — real open/closed positions and real cash. Just tell Claude
+                    ("bought 5 QQQ 715c", "closed for +\$340", "deposited \$2k") and it's kept up to date. No
+                    analysis or plans here — see Thesis/Ideas/Journal for that.
+                  </SkillTip>
+                  <PortfolioPanel positions={portfolioPositions} balances={accountBalances} />
                 </>
               )}
               {sidebarTab === 'activity' && (

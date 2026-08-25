@@ -80,8 +80,12 @@ export function evaluateCondition(condition: AlertCondition, candles: Candlestic
 // Checks every pending alert for one symbol against its freshly-computed
 // snapshot: expires anything past its expiresAt (so a pending condition
 // tied to a since-expired idea doesn't linger forever waiting for a scan
-// that expires it), then evaluates the rest. Only writes alerts.json back
-// if something actually changed.
+// that expires it), then checks `invalidation` (the competing scenario —
+// evaluated the same way as the main condition, and checked first, so a
+// bearish trigger that's just been overtaken by a bullish reclaim
+// resolves the moment that reclaim happens, not whenever a stale window
+// eventually times out), then the main condition. Only writes alerts.json
+// back if something actually changed.
 export function evaluateAlertsForSymbol(symbol: string, snapshot: AnalysisSnapshot): void {
   const all = readAlerts();
   const now = Date.now();
@@ -95,9 +99,20 @@ export function evaluateAlertsForSymbol(symbol: string, snapshot: AnalysisSnapsh
       return { ...alert, status: 'expired' };
     }
 
-    // Not yet in its active window — expiry above still applies (an
-    // alert can lapse before ever becoming active, e.g. stale/malformed
-    // data), but the condition itself isn't checked yet.
+    // Invalidation isn't gated by activeFrom — the competing scenario can
+    // resolve this alert even before its own watch window has opened.
+    if (alert.invalidation) {
+      const invBlock = snapshot.timeframes[alert.invalidation.timeframe];
+      if (invBlock?.candles.length && evaluateCondition(alert.invalidation, invBlock.candles)) {
+        changed = true;
+        return { ...alert, status: 'invalidated', invalidatedAt: new Date(now).toISOString() };
+      }
+    }
+
+    // Not yet in its active window — expiry/invalidation above still
+    // apply (an alert can lapse or be invalidated before ever becoming
+    // active, e.g. stale/malformed data), but the main condition isn't
+    // checked yet.
     if (alert.activeFrom && Date.parse(alert.activeFrom) > now) return alert;
 
     const block = snapshot.timeframes[alert.condition.timeframe];

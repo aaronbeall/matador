@@ -22,11 +22,15 @@ On-demand only — there is no scheduled/cron version of this yet.
      fresh every run; the user may have edited it since last time.
    - `data/trade-ideas.json`, `data/levels.json` — existing entries, to
      merge against rather than overwrite blindly.
-   - `data/trade-journal.md` — real trade history and lessons relayed by
-     the user in conversation (distinct from `trade-ideas.json`'s
-     proposals). Read the Lessons section before evaluating setups per
-     `strategy.md`'s Discretion clause — a recent, relevant lesson should
-     change what gets proposed, not just sit there unread.
+   - `data/journal.json` — real trades and notes relayed by the user, plus
+     Claude's own past review entries grading prior calls (distinct from
+     `trade-ideas.json`'s proposals). Skim recent `review` entries before
+     evaluating setups per `strategy.md`'s Discretion clause — a recent
+     `miss`/`missed-opportunity` pattern should change what gets proposed,
+     not just sit there unread. See root `CLAUDE.md` for the full shape
+     and when to write each entry kind — this run is also a good moment
+     to add fresh `review` entries for any thesis/alert that's resolved
+     since the last run.
 
 2. **Read the annotated history per symbol — and actually read it, like a
    chart.** A background cache (`vite-plugins/marketData/cache.ts`)
@@ -197,6 +201,35 @@ On-demand only — there is no scheduled/cron version of this yet.
      mean "stand aside," not "reverse and short it." Use `exit` when the
      alert is invalidating a specific open idea (`relatedIdeaId` set,
      status `taken`), not a fresh entry signal.
+   - **Set `invalidation` whenever there's a real opposite scenario** — an
+     `AlertCondition`, same shape as `condition`, for the competing case
+     that would mean this alert's premise stopped being true (typically
+     the other side of the same setup: a bearish breakdown trigger's
+     natural invalidation is the bullish reclaim level that would
+     contradict it). The engine evaluates this live, the same way as the
+     main condition, and resolves the alert to `status: 'invalidated'` the
+     moment it fires — this is what keeps a stale alert from just sitting
+     there as `pending`/`action` for hours after the market has clearly
+     gone the other way, waiting on `expiresAt` to eventually catch up.
+     Skip it only when there's genuinely no clean opposite condition to
+     point at.
+   - **When `action` isn't `watch`, give at least one `suggestions` entry**
+     — a concrete `TradeSuggestion` (see `src/types/Alert.ts`): instrument
+     (`shares`/`call`/`put`), strike/expiry if it's an option, and
+     entry/stop/target. `entry`/`stop`/`target` are always the
+     *underlying's* price levels — there's no live options-chain data in
+     this app to price a real premium from, so an option suggestion
+     expresses the same underlying move via strike/expiry, not a
+     separately-invented target. Give more than one suggestion when
+     genuinely applicable (e.g. a plain-shares alternative alongside an
+     options one for leverage) — strikes/expiries should respect
+     `strategy.md` (no far-OTM, no naked/uncapped options; a long call/put
+     is fine, a defined-risk vertical if you want to cap cost further) and
+     the same 2:1 minimum R:R as everything else. **Never fabricate a
+     `target`** just to fill the field — if no structural level actually
+     supports one yet, omit `target` and `riskReward` and say so in `note`
+     (e.g. "no fixed target — manage via ATR trail once triggered")
+     instead of inventing a number.
    - **Time-box a condition with `activeFrom` when the signal only means
      something in a specific window** — not evaluated before `activeFrom`
      (defaults to right away if omitted), still auto-expires at
@@ -219,18 +252,22 @@ On-demand only — there is no scheduled/cron version of this yet.
      just keeps getting checked for nothing. This is what keeps repeated
      scans from accumulating near-duplicate alerts for the same condition.
 
-7. **Update `data/thesis.json` — the standing read, not a proposal.**
-   Independent of whether a trade idea qualified this run: write/replace
-   this symbol's entry (see `src/types/Thesis.ts`) with the current
-   `sentiment` (bullish/bearish/neutral), `stance` (long/short/hold —
-   **not** mechanically derived from sentiment, same caveat as an alert's
-   `action`: a bearish read is often `hold`, not `short`, if nothing in
-   `strategy.md` actually qualifies a short here), a one-line `summary`,
-   the fuller `reasoning` from your market-structure read in step 3, and
-   `invalidation` if there's a concrete level/condition that would change
-   your mind. One entry per symbol — overwrite the prior one, this isn't
-   a history log. Skip writing it only if data quality was too thin to
-   form any real read (say so in the analysis-log entry instead).
+7. **Append to `data/thesis.json` — the standing read, not a proposal.**
+   Independent of whether a trade idea qualified this run: append a new
+   entry for this symbol (see `src/types/Thesis.ts` — give it a fresh
+   `id`) with the current `sentiment` (bullish/bearish/neutral), `stance`
+   (long/short/hold — **not** mechanically derived from sentiment, same
+   caveat as an alert's `action`: a bearish read is often `hold`, not
+   `short`, if nothing in `strategy.md` actually qualifies a short here),
+   a one-line `summary`, the fuller `reasoning` from your market-structure
+   read in step 3, and `invalidation` if there's a concrete level/
+   condition that would change your mind. This is append-only — the
+   frontend shows the most recent entry per symbol as the current read and
+   everything older as history, so don't overwrite/remove a prior entry,
+   and don't append one that says nothing new since the last (e.g. two
+   runs in a row with an unchanged read) unless something concrete did
+   change. Skip writing it only if data quality was too thin to form any
+   real read (say so in the analysis-log entry instead).
 
 8. **Append to `data/analysis-log.json`.** One entry per symbol scanned
    this run, always — including "no data yet", "insufficient history",

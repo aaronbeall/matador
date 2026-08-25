@@ -14,6 +14,8 @@ import { Alerts } from '../types/Alert';
 import { AnalysisLog } from '../types/AnalysisLog';
 import { Skills } from '../types/Skill';
 import { Theses } from '../types/Thesis';
+import { Journal } from '../types/Journal';
+import { Positions, AccountBalances } from '../types/Portfolio';
 
 export async function getWatchlist(): Promise<Watchlist> {
   const res = await fetch('/api/watchlist');
@@ -85,6 +87,51 @@ export async function saveThesis(thesis: Theses): Promise<void> {
     body: JSON.stringify(thesis),
   });
   if (!res.ok) throw new Error('Failed to save thesis');
+}
+
+export async function getJournal(): Promise<Journal> {
+  const res = await fetch('/api/journal');
+  if (!res.ok) throw new Error('Failed to load journal');
+  return res.json();
+}
+
+export async function saveJournal(journal: Journal): Promise<void> {
+  const res = await fetch('/api/journal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(journal),
+  });
+  if (!res.ok) throw new Error('Failed to save journal');
+}
+
+export async function getPortfolioPositions(): Promise<Positions> {
+  const res = await fetch('/api/portfolio-positions');
+  if (!res.ok) throw new Error('Failed to load portfolio positions');
+  return res.json();
+}
+
+export async function savePortfolioPositions(positions: Positions): Promise<void> {
+  const res = await fetch('/api/portfolio-positions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(positions),
+  });
+  if (!res.ok) throw new Error('Failed to save portfolio positions');
+}
+
+export async function getAccountBalances(): Promise<AccountBalances> {
+  const res = await fetch('/api/portfolio-balances');
+  if (!res.ok) throw new Error('Failed to load account balances');
+  return res.json();
+}
+
+export async function saveAccountBalances(balances: AccountBalances): Promise<void> {
+  const res = await fetch('/api/portfolio-balances', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(balances),
+  });
+  if (!res.ok) throw new Error('Failed to save account balances');
 }
 
 export async function getAnalysisLog(): Promise<AnalysisLog> {

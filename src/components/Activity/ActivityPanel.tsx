@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, List, ListItem, ListItemText, Typography } from '@mui/material';
 import { AnalysisLogEntry } from '../../types/AnalysisLog';
+import { SymbolBadge } from '../SymbolBadge';
 
 interface ActivityPanelProps {
   entries: AnalysisLogEntry[];
@@ -32,8 +33,8 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({ entries }) => {
                 </Typography>
                 <Typography variant="body2" fontWeight="bold">
                   {entry.tool}
-                  {entry.symbol ? ` · ${entry.symbol}` : ''}
                 </Typography>
+                {entry.symbol && <SymbolBadge symbol={entry.symbol} size="small" />}
               </Box>
             }
             secondary={entry.summary}

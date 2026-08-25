@@ -12,8 +12,10 @@ import {
   Tooltip,
 } from '@mui/material';
 import { TradeIdea } from '../../types/TradeIdea';
-import { formatPrice } from '../../utils/formatters';
+import { formatPrice, formatRelativeTime, formatTimestamp } from '../../utils/formatters';
 import { partitionBySymbol } from '../../utils/bySymbol';
+import { SymbolBadge } from '../SymbolBadge';
+import { PanelSectionHeader } from '../Sidebar/PanelSectionHeader';
 
 const statusColor: Record<TradeIdea['status'], 'default' | 'success' | 'error' | 'warning' | 'info'> = {
   proposed: 'info',
@@ -24,24 +26,16 @@ const statusColor: Record<TradeIdea['status'], 'default' | 'success' | 'error' |
   expired: 'default',
 };
 
-const formatAge = (iso: string) => {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
-};
-
 interface IdeasPanelProps {
   ideas: TradeIdea[];
   lastUpdated: Date | null;
   currentSymbol: string;
+  multiSymbol: boolean;
 }
 
 const renderRow = (idea: TradeIdea) => (
   <TableRow key={idea.id}>
-    <TableCell>{idea.symbol}</TableCell>
+    <TableCell><SymbolBadge symbol={idea.symbol} size="small" /></TableCell>
     <TableCell>{idea.direction === 'long' ? 'Long' : 'Short'}</TableCell>
     <TableCell>{idea.timeframe}</TableCell>
     <TableCell align="right">{formatPrice(idea.entry)}</TableCell>
@@ -52,14 +46,22 @@ const renderRow = (idea: TradeIdea) => (
       <Chip label={idea.status} size="small" color={statusColor[idea.status]} />
     </TableCell>
     <TableCell align="right">
-      <Tooltip title={idea.thesis} placement="left">
-        <span>{formatAge(idea.createdAt)}</span>
+      <Tooltip
+        placement="left"
+        title={
+          <>
+            <div>Created {formatTimestamp(idea.createdAt)}</div>
+            <div>{idea.thesis}</div>
+          </>
+        }
+      >
+        <span>{formatRelativeTime(idea.createdAt)}</span>
       </Tooltip>
     </TableCell>
   </TableRow>
 );
 
-export const IdeasPanel: React.FC<IdeasPanelProps> = ({ ideas, lastUpdated, currentSymbol }) => {
+export const IdeasPanel: React.FC<IdeasPanelProps> = ({ ideas, lastUpdated, currentSymbol, multiSymbol }) => {
   const openIdeas = ideas.filter((i) => i.status === 'proposed' || i.status === 'taken');
   // What's relevant to the chart you're actually looking at comes first —
   // see partitionBySymbol.
@@ -91,13 +93,13 @@ export const IdeasPanel: React.FC<IdeasPanelProps> = ({ ideas, lastUpdated, curr
               </TableRow>
             </TableHead>
             <TableBody>
-              <TableRow>
-                <TableCell colSpan={9} sx={{ border: 0, pb: 0 }}>
-                  <Typography variant="overline" color="text.secondary">
-                    {currentSymbol}
-                  </Typography>
-                </TableCell>
-              </TableRow>
+              {multiSymbol && (
+                <TableRow>
+                  <TableCell colSpan={9} sx={{ border: 0, pb: 0 }}>
+                    <PanelSectionHeader>{currentSymbol}</PanelSectionHeader>
+                  </TableCell>
+                </TableRow>
+              )}
               {current.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} sx={{ border: 0 }}>
@@ -113,9 +115,7 @@ export const IdeasPanel: React.FC<IdeasPanelProps> = ({ ideas, lastUpdated, curr
                 <>
                   <TableRow>
                     <TableCell colSpan={9} sx={{ borderBottom: 0, pt: 2, pb: 0 }}>
-                      <Typography variant="overline" color="text.secondary">
-                        Other Watchlist Symbols
-                      </Typography>
+                      <PanelSectionHeader>Other Watchlist Symbols</PanelSectionHeader>
                     </TableCell>
                   </TableRow>
                   {other.map(renderRow)}

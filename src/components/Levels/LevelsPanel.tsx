@@ -3,15 +3,18 @@ import { Box, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, 
 import { Level } from '../../types/Level';
 import { formatPrice } from '../../utils/formatters';
 import { partitionBySymbol } from '../../utils/bySymbol';
+import { SymbolBadge } from '../SymbolBadge';
+import { PanelSectionHeader } from '../Sidebar/PanelSectionHeader';
 
 interface LevelsPanelProps {
   levels: Level[];
   currentSymbol: string;
+  multiSymbol: boolean;
 }
 
 const renderRow = (level: Level) => (
   <TableRow key={level.id}>
-    <TableCell>{level.symbol}</TableCell>
+    <TableCell><SymbolBadge symbol={level.symbol} size="small" /></TableCell>
     <TableCell>
       <Chip
         label={level.type}
@@ -25,7 +28,7 @@ const renderRow = (level: Level) => (
   </TableRow>
 );
 
-export const LevelsPanel: React.FC<LevelsPanelProps> = ({ levels, currentSymbol }) => {
+export const LevelsPanel: React.FC<LevelsPanelProps> = ({ levels, currentSymbol, multiSymbol }) => {
   const active = levels.filter((l) => l.active).sort((a, b) => b.price - a.price);
 
   if (active.length === 0) {
@@ -54,13 +57,13 @@ export const LevelsPanel: React.FC<LevelsPanelProps> = ({ levels, currentSymbol 
             </TableRow>
           </TableHead>
           <TableBody>
-            <TableRow>
-              <TableCell colSpan={4} sx={{ border: 0, pb: 0 }}>
-                <Typography variant="overline" color="text.secondary">
-                  {currentSymbol}
-                </Typography>
-              </TableCell>
-            </TableRow>
+            {multiSymbol && (
+              <TableRow>
+                <TableCell colSpan={4} sx={{ border: 0, pb: 0 }}>
+                  <PanelSectionHeader>{currentSymbol}</PanelSectionHeader>
+                </TableCell>
+              </TableRow>
+            )}
             {current.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} sx={{ border: 0 }}>
@@ -76,9 +79,7 @@ export const LevelsPanel: React.FC<LevelsPanelProps> = ({ levels, currentSymbol 
               <>
                 <TableRow>
                   <TableCell colSpan={4} sx={{ borderBottom: 0, pt: 2, pb: 0 }}>
-                    <Typography variant="overline" color="text.secondary">
-                      Other Watchlist Symbols
-                    </Typography>
+                    <PanelSectionHeader>Other Watchlist Symbols</PanelSectionHeader>
                   </TableCell>
                 </TableRow>
                 {other.map(renderRow)}

@@ -13,6 +13,7 @@ import {
 } from '@mui/material';
 import { Delete as DeleteIcon, Add as AddIcon } from '@mui/icons-material';
 import { WatchlistEntry } from '../../types/Watchlist';
+import { SymbolBadge } from '../SymbolBadge';
 
 interface WatchlistPanelProps {
   watchlist: WatchlistEntry[];
@@ -91,7 +92,7 @@ export const WatchlistPanel: React.FC<WatchlistPanelProps> = ({
                 onClick={() => onSelectSymbol(entry.symbol)}
               >
                 <ListItemText
-                  primary={entry.symbol}
+                  primary={<SymbolBadge symbol={entry.symbol} />}
                   sx={{ opacity: entry.active ? 1 : 0.5 }}
                 />
               </ListItemButton>

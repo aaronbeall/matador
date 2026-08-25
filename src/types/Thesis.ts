@@ -8,13 +8,17 @@ import { Direction } from '../constants/direction';
 // position's thesis hasn't actually broken yet.
 export type Stance = 'long' | 'short' | 'hold';
 
-// The current, standing market read for one symbol — distinct from
-// data/trade-ideas.json (a concrete, expiring entry/stop/target proposal)
-// and data/alerts.json (a one-shot trigger). This is closer to a running
-// commentary: what's the read right now, and why, updated whenever it
-// actually changes rather than on a timer. One entry per symbol — a fresh
-// write replaces the previous one for that symbol, it isn't a history log.
+// The market read for a symbol, at the time it was written — distinct
+// from data/trade-ideas.json (a concrete, expiring entry/stop/target
+// proposal) and data/alerts.json (a one-shot trigger). This is closer to
+// a running commentary: what's the read right now, and why, written
+// whenever it actually changes rather than on a timer. Append-only — a
+// fresh write is a new entry, not an overwrite, so the history of how the
+// read evolved for a symbol is kept, not discarded. The most recent entry
+// per symbol (by `updatedAt`) is the current standing read; everything
+// older is history.
 export interface Thesis {
+  id: string;
   symbol: string;
   sentiment: Direction;
   stance: Stance;
