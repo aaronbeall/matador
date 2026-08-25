@@ -75,6 +75,7 @@ import { computeAutoLevels } from './utils/autoLevels';
 import { CHART_COLORS } from './constants/colors';
 import { PATTERN_INFO, PatternStrength } from './constants/patterns';
 import { formatPrice, formatVolume, formatDelta, formatPercent, formatTimestamp, formatRelativeTime } from './utils/formatters';
+import { isAlertLive } from './utils/alerts';
 import { INDICATOR_DEFS } from './constants/indicators';
 import { MACDHistogramBar } from './components/MACDHistogramBar';
 import { WatchlistPanel } from './components/Watchlist/WatchlistPanel';
@@ -439,10 +440,12 @@ const AppContent = () => {
   const levelsNewCount = levels.filter(
     (l) => l.active && l.createdAt > (lastSeenAt.levels ?? '')
   ).length;
-  // Triggered alerts stay 'triggered' until something actually resolves
-  // them (invalidated/expired/superseded) — no separate acknowledge flag
-  // — so this counts what's actively live and unresolved right now.
-  const alertsTriggeredCount = alerts.filter((a) => a.status === 'triggered').length;
+  // A `triggered` alert whose own `expiresAt` has since passed is stale,
+  // not still active — the engine never revisits an already-triggered
+  // alert to notice that, so isAlertLive checks it here instead. This is
+  // what keeps the badge from just counting every trigger that's ever
+  // fired.
+  const alertsActiveCount = alerts.filter(isAlertLive).length;
   const journalNewCount = journal.filter((e) => e.timestamp > (lastSeenAt.journal ?? '')).length;
   const portfolioNewCount = portfolioPositions.filter(
     (p) => (p.exitAt ?? p.entryAt) > (lastSeenAt.portfolio ?? '')
@@ -461,7 +464,7 @@ const AppContent = () => {
     { value: 'thesis', label: 'Thesis', icon: <ThesisIcon />, badgeCount: thesisNewCount },
     { value: 'ideas', label: 'Ideas', icon: <IdeasIcon />, badgeCount: ideasNewCount },
     { value: 'levels', label: 'Levels', icon: <LevelsIcon />, badgeCount: levelsNewCount },
-    { value: 'alerts', label: 'Alerts', icon: <AlertsIcon />, badgeCount: alertsTriggeredCount },
+    { value: 'alerts', label: 'Alerts', icon: <AlertsIcon />, badgeCount: alertsActiveCount },
     { value: 'journal', label: 'Journal', icon: <JournalIcon />, badgeCount: journalNewCount },
     { value: 'portfolio', label: 'Portfolio', icon: <PortfolioIcon />, badgeCount: portfolioNewCount },
     { value: 'activity', label: 'Activity', icon: <ActivityIcon />, badgeCount: activityNewCount },

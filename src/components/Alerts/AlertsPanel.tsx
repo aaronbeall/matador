@@ -18,6 +18,7 @@ import {
 import { Alert, AlertAction, AlertCondition, AlertSeverity, AlertStatus, TradeSuggestion } from '../../types/Alert';
 import { Direction } from '../../constants/direction';
 import { formatTimestamp, formatRelativeTime, formatPrice } from '../../utils/formatters';
+import { isAlertLive } from '../../utils/alerts';
 import { SymbolBadge } from '../SymbolBadge';
 
 interface AlertsPanelProps {
@@ -415,13 +416,13 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts }) => {
 
   const renderAlert = (alert: Alert) => {
     // Faded = no longer live: nothing here is actively notifying you
-    // anymore, whether it resolved automatically (invalidated/expired) or
-    // Claude superseded it on a later scan. A pending or freshly-triggered
-    // alert always renders at full opacity.
-    const dimmed =
-      alert.status === 'superseded' ||
-      alert.status === 'expired' ||
-      alert.status === 'invalidated';
+    // anymore. That's every resolved status (invalidated/expired/
+    // superseded) — and also a `triggered` alert whose own `expiresAt`
+    // has quietly passed (the engine never revisits an already-triggered
+    // alert, so this has to be checked here, live, off the clock, or a
+    // week-old trigger would render exactly like a fresh one forever).
+    // Only a genuinely current `pending` or `triggered` alert stays bright.
+    const dimmed = alert.status !== 'pending' && !isAlertLive(alert);
     const bodyOpen = !collapsedBodies.has(alert.id);
     // A prominent banner only once it's actually triggered and there's a
     // real action to take — a pending "watch only" alert gets a quieter
@@ -578,6 +579,7 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts }) => {
           >
             {formatCondition(alert.condition)}
             {alert.invalidation && `\ninvalidated if: ${formatCondition(alert.invalidation)}`}
+            {`\nwindow: ${alert.activeFrom ? formatTimestamp(alert.activeFrom) : formatTimestamp(alert.createdAt)} → ${formatTimestamp(alert.expiresAt)}`}
           </Typography>
         </Box>
         </Collapse>

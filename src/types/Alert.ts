@@ -103,7 +103,15 @@ export interface Alert {
   // it) and expiresAt to how long after that a break still counts as *the*
   // ORB signal rather than an unrelated late-day level cross.
   activeFrom?: string; // ISO timestamp
-  expiresAt: string; // ISO timestamp — required; inherit the related idea's, or set one deliberately
+  // ISO timestamp, required. Two jobs, not one: gates when a *pending*
+  // condition stops being watched (the engine flips it to 'expired'), AND
+  // — just as much — how long a *triggered* alert stays relevant at all.
+  // The engine only re-evaluates 'pending' alerts, so nothing ever
+  // rewrites a triggered alert's status once its window passes; the UI
+  // computes that live instead (see src/utils/alerts.ts's isAlertLive)
+  // rather than treating a week-old trigger as current forever. Inherit
+  // the related idea's expiresAt, or set one deliberately either way.
+  expiresAt: string;
 }
 
 export type Alerts = Alert[];
