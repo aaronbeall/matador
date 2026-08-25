@@ -17,7 +17,7 @@ import {
 } from '@mui/icons-material';
 import { Alert, AlertAction, AlertCondition, AlertSeverity, AlertStatus, TradeSuggestion } from '../../types/Alert';
 import { Direction } from '../../constants/direction';
-import { formatTimestamp, formatRelativeTime, formatPrice } from '../../utils/formatters';
+import { formatTimestamp, formatRelativeTime, formatPrice, formatWindow } from '../../utils/formatters';
 import { isAlertLive } from '../../utils/alerts';
 import { SymbolBadge } from '../SymbolBadge';
 
@@ -195,28 +195,6 @@ const actionLabel: Record<AlertAction, string> = {
   exit: 'Exit Position',
   watch: 'Watch Only',
 };
-
-// A window's two endpoints — deliberately NOT formatTimestamp (which
-// omits the date whenever a timestamp falls on *today*, relative to now).
-// That's the wrong reference point for a range: what matters for a
-// window is whether its OWN two ends fall on the same day as each OTHER,
-// not whether either happens to be today. A same-day window ("10:00 AM →
-// 4:15 PM") doesn't need dates at all; a window starting yesterday and
-// ending today needs the date on *both* ends ("Aug 24, 4:11 PM → Aug 25,
-// 4:15 PM") — showing it on only the non-today end (what formatTimestamp
-// would do) makes the dated one look like the odd one out, i.e. like the
-// whole window belongs to that earlier day and has already closed.
-function formatWindow(startIso: string, endIso: string): string {
-  const start = new Date(startIso);
-  const end = new Date(endIso);
-  const spansDays = start.toDateString() !== end.toDateString();
-  const bound = (d: Date) => {
-    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    if (!spansDays) return time;
-    return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${time}`;
-  };
-  return `${bound(start)} → ${bound(end)}`;
-}
 
 // One readable line for the raw technical trigger — the "way to see the
 // technical conditions" ask, kept separate from headline/rationale/
