@@ -39,10 +39,13 @@ export function groupEntriesByDate<T>(
   return groups;
 }
 
-export const TimelineDateHeader = ({ label }: { label: string }) => (
+// `color`, when given, tints the label and its divider line — e.g. the
+// Journal uses it to reflect a day's overall sentiment, so a rough glance
+// down the timeline shows which days ran rough without reading every entry.
+export const TimelineDateHeader = ({ label, color }: { label: string; color?: string }) => (
   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2, mb: 0.5, '&:first-of-type': { mt: 0 } }}>
-    <Typography variant="subtitle2" fontWeight={700}>{label}</Typography>
-    <Box sx={{ flexGrow: 1, height: '1px', bgcolor: 'divider' }} />
+    <Typography variant="subtitle2" fontWeight={700} sx={{ color: color || 'text.primary' }}>{label}</Typography>
+    <Box sx={{ flexGrow: 1, height: '1px', bgcolor: color || 'divider', opacity: color ? 0.4 : 1 }} />
   </Box>
 );
 

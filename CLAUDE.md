@@ -55,7 +55,13 @@ reverse-chronological array:
   user relays something worth remembering that isn't a real trade — a
   preference, a correction, a market observation. (A real trade goes to
   Portfolio instead, not here.) Use the user's own words when it's their
-  note; don't paraphrase into Claude's voice.
+  note; don't paraphrase into Claude's voice. A note can optionally carry
+  the same `verdict` a review does (a relayed trade that won/lost, or a
+  clear avoid/miss) — the UI auto-detects this from the note's own text
+  (see `detectVerdict` in `JournalPanel.tsx`) and always lets it be
+  overridden by hand, so don't feel obligated to set it yourself when
+  writing a note in chat; leave it unset on anything that isn't actually
+  gradeable (a balance update, a preference, general venting).
 - **`review`** — Claude grading its own prior call (a thesis, an alert, a
   skipped setup) against what the market actually did afterward.
   `verdict` is one of `hit` / `miss` / `missed-opportunity` /
@@ -93,3 +99,46 @@ everything to the extremes — most things are mildly one way or the other,
 not -1/+1. This is a real signal worth getting right, not decoration: a
 run of negative-sentiment entries is itself worth noticing (e.g. before
 exercising discretion on a new setup while the user's clearly frustrated).
+- **User notes weigh much more heavily than your own.** A `note` with
+  `author: 'user'` is the real emotional signal — their own words about
+  their own trading — and should anchor the day's tone strongly. A
+  `review` or a `note` with `author: 'claude'` is your own commentary on
+  how a call played out, not a report of how the user feels; weight it
+  much lighter than a user note when it's pulling the same day in a
+  different direction (e.g. a user's frustrated note shouldn't get
+  diluted toward neutral just because you also logged a `hit` review that
+  day).
+- **Facts matter as much as tone, for both kinds of entry.** Don't score
+  purely off the emotional register of the wording — factor in what
+  actually happened: a loss vs. a win, and its size relative to what's
+  actually at stake for this account (a $20 loss against a $80 balance is
+  a big loss, not a mild one — see `data/portfolio-balances.json` for the
+  real number). A calmly-worded big loss should still land clearly
+  negative; a flatly-worded big win should still land clearly positive.
+  Reserve the extremes (near ±1) for outcomes that are genuinely
+  exceptional in size or consequence, not just strongly-worded.
+- **Backfill missing sentiment as a normal part of touching the journal.**
+  Notes added directly through the app's own UI (not relayed through you
+  in chat) never get a sentiment set — there's no you-in-the-loop moment
+  for that. So whenever you're already reading or updating
+  `data/journal.json` for some other reason, scan for entries missing
+  `sentiment` and infer it then, using the same tone+facts read above.
+  Don't go out of your way to open the journal solely to backfill this —
+  piggyback on whatever visit you're already making. There's no on-demand
+  "run sentiment analysis now" mechanism yet (the app is a static
+  frontend + dev-server plugins with no way to invoke you from the UI
+  itself) — piggybacking like this is the workaround until that exists.
+- **Same piggyback pass, for a note's `verdict` — but high-confidence
+  only, and mark your work either way.** The UI's own `detectVerdict`
+  auto-suggests as someone fills the form, but that's a keyword heuristic,
+  not a real read — it's not what "Claude reviewed this" means. When
+  you're already touching the journal, look at any note where
+  `verdict` is absent **and** `verdictReviewed` isn't `true` yet (that
+  combination is the actual "nobody's ever looked at this one" signal —
+  see `src/types/Journal.ts`). Set a real `verdict` only when the note
+  unambiguously describes a graded-worthy outcome; otherwise leave
+  `verdict` unset but set `verdictReviewed: true` so you don't re-litigate
+  the same ungradeable note (a balance update, a preference, general
+  venting) on every future pass. Never guess to fill in a verdict — an
+  absent one you've already considered is a correct, final answer, not a
+  gap.

@@ -11,6 +11,13 @@
 
 export type JournalEntryKind = 'note' | 'review';
 
+// hit/miss/dodged-trap/missed-opportunity — originally just how a
+// `review` grades a past call, but a `note` can carry one too when it
+// describes an actual trade outcome or a clear avoid/miss (auto-detected
+// from the note's text, always user-overridable — see JournalPanel's
+// detectVerdict). A plain note with nothing gradeable in it just omits it.
+export type ReviewVerdict = 'hit' | 'miss' | 'missed-opportunity' | 'dodged-trap';
+
 interface JournalEntryBase {
   id: string;
   timestamp: string; // ISO — when the entry was written, not necessarily when the thing happened
@@ -24,6 +31,16 @@ interface JournalEntryBase {
   // the user's behalf, set this from a genuine read of the tone in what
   // was said — see CLAUDE.md.
   sentiment?: number;
+  verdict?: ReviewVerdict;
+  // Only meaningful when `verdict` is absent, and only on a `note` (a
+  // `review`'s verdict is always required and always set). Distinguishes
+  // two different "blank"s that otherwise look identical: a note Claude
+  // has already evaluated for an outcome and deliberately decided none
+  // applies (`true`) vs. one nobody's evaluated yet (`undefined`/`false`).
+  // Lets the routine journal-backfill pass (see CLAUDE.md) skip what it's
+  // already considered instead of re-litigating it on every visit, while
+  // still catching genuinely fresh notes.
+  verdictReviewed?: boolean;
 }
 
 // Freeform — either the user's own words relayed in conversation, or a
@@ -36,14 +53,12 @@ export interface JournalNoteEntry extends JournalEntryBase {
   text: string;
 }
 
-// Claude grading its own prior call (a thesis, an alert, or a skipped
-// setup) against what the market actually did afterward. This is the
-// "hits and misses" mechanism — the whole point of the feature.
-export type ReviewVerdict = 'hit' | 'miss' | 'missed-opportunity' | 'dodged-trap';
-
 // What's being graded, loosely — not a hard foreign key, just context.
 export type ReviewSourceType = 'thesis' | 'alert' | 'idea';
 
+// Claude grading its own prior call (a thesis, an alert, or a skipped
+// setup) against what the market actually did afterward. This is the
+// "hits and misses" mechanism — the whole point of the feature.
 export interface JournalReviewEntry extends JournalEntryBase {
   kind: 'review';
   symbol: string;

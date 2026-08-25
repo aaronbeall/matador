@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -8,8 +8,6 @@ import {
   Tooltip,
   TextField,
   Button,
-  ToggleButton,
-  ToggleButtonGroup,
   Select,
   MenuItem,
   FormControl,
@@ -78,6 +76,28 @@ const SOURCE_TYPE_LABEL: Record<ReviewSourceType, string> = {
 
 const genId = () => `jrnl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
+// Best-effort read of whether a note's own text describes a gradeable
+// outcome — a real trade taken (won/lost) or a clear avoid/miss — so a
+// note doesn't have to be manually classified from scratch every time.
+// Deliberately conservative: a general/venting note with no trade or
+// avoid/miss language returns undefined rather than guessing, since a
+// wrong auto-verdict is worse than none (it's always one click to
+// override in the form either way).
+export function detectVerdict(text: string): ReviewVerdict | undefined {
+  const t = text.toLowerCase();
+  const tookTrade = /\b(bought|sold|shorted|scalp(ed)?|entered|took (a|the) (trade|position)|long|calls?|puts?)\b/.test(t);
+  const hasLoss = /\b(lost|loss(es)?|down \$|-\$|stopped out|losing|cut (it|the trade|for a loss))\b/.test(t);
+  const hasWin = /\b(profit(ed)?|gained|up \$|\+\$|won|nailed it|worked out|hit (my |the )?target)\b/.test(t);
+  const avoided = /\b(avoided|dodged|skipped|stayed out|didn'?t take|passed on|glad i didn'?t)\b/.test(t);
+  const missedGood = /\b(should('?ve| have)|would'?ve (worked|hit|run)|missed (it|the move|that))\b/.test(t);
+
+  if (tookTrade && hasLoss) return 'miss';
+  if (tookTrade && hasWin) return 'hit';
+  if (avoided) return 'dodged-trap';
+  if (missedGood) return 'missed-opportunity';
+  return undefined;
+}
+
 // Shared red-to-green read for a -1..1 sentiment value — used for both
 // the meter's marker and the timeline dot, so "this entry's tone" always
 // reads as the same color wherever it shows up.
@@ -119,9 +139,10 @@ const SentimentMeter = ({ value }: { value: number }) => (
 );
 
 // Lightweight scoreboard so "clear view of hits and misses" is answerable
-// at a glance, not just by reading every entry — counts every review
-// entry ever logged, not scoped to the current symbol, since the point is
-// tracking how Claude's calls hold up in aggregate over time.
+// at a glance, not just by reading every entry — counts every verdict
+// logged, review or note alike, not scoped to the current symbol, since
+// the point is tracking how calls (Claude's and the user's own trades)
+// hold up in aggregate over time.
 const JournalScoreboard = ({ entries }: { entries: JournalEntry[] }) => {
   const counts: Record<ReviewVerdict, number> = {
     hit: 0,
@@ -130,7 +151,7 @@ const JournalScoreboard = ({ entries }: { entries: JournalEntry[] }) => {
     'dodged-trap': 0,
   };
   for (const entry of entries) {
-    if (entry.kind === 'review') counts[entry.verdict]++;
+    if (entry.verdict) counts[entry.verdict]++;
   }
   const total = counts.hit + counts.miss + counts['missed-opportunity'] + counts['dodged-trap'];
   if (total === 0) return null;
@@ -215,18 +236,30 @@ const EntryControls = ({ onEdit, onDelete }: { onEdit: () => void; onDelete: () 
   );
 };
 
-const NoteEntryCard = ({ entry }: { entry: Extract<JournalEntry, { kind: 'note' }> }) => (
-  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-      <Typography variant="caption" sx={{ fontWeight: 600 }}>
-        {entry.author === 'user' ? 'You' : 'Claude'}
-      </Typography>
-      {entry.symbol && <SymbolBadge symbol={entry.symbol} size="small" />}
-      {entry.sentiment != null && <SentimentMeter value={entry.sentiment} />}
+const NoteEntryCard = ({ entry }: { entry: Extract<JournalEntry, { kind: 'note' }> }) => {
+  const VerdictIcon = entry.verdict ? VERDICT_ICON[entry.verdict] : null;
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+        <Typography variant="caption" sx={{ fontWeight: 600 }}>
+          {entry.author === 'user' ? 'You' : 'Claude'}
+        </Typography>
+        {entry.symbol && <SymbolBadge symbol={entry.symbol} size="small" />}
+        {entry.verdict && VerdictIcon && (
+          <Chip
+            icon={<VerdictIcon fontSize="small" />}
+            label={VERDICT_LABEL[entry.verdict]}
+            size="small"
+            color={VERDICT_COLOR[entry.verdict]}
+            variant="outlined"
+          />
+        )}
+        {entry.sentiment != null && <SentimentMeter value={entry.sentiment} />}
+      </Box>
+      <Typography variant="body2" sx={{ lineHeight: 1.5 }}>{entry.text}</Typography>
     </Box>
-    <Typography variant="body2" sx={{ lineHeight: 1.5 }}>{entry.text}</Typography>
-  </Box>
-);
+  );
+};
 
 const ReviewEntryCard = ({ entry }: { entry: Extract<JournalEntry, { kind: 'review' }> }) => {
   const Icon = VERDICT_ICON[entry.verdict];
@@ -264,22 +297,44 @@ const EntryForm = ({
   onSave: (entry: JournalEntry) => void;
   onCancel: () => void;
 }) => {
-  const [kind, setKind] = useState<JournalEntryKind>(initialEntry?.kind ?? 'note');
-  const [author, setAuthor] = useState<'user' | 'claude'>(
-    initialEntry?.kind === 'note' ? initialEntry.author : 'user'
-  );
+  // Adding always creates a note — a `review` is Claude's own grading
+  // mechanism, written directly (see CLAUDE.md), not something offered as
+  // a kind choice in this human-facing form. Editing an existing review
+  // just keeps editing it as a review (kind isn't switchable either way).
+  const kind: JournalEntryKind = initialEntry?.kind ?? 'note';
+  // Same reasoning as kind: this form is the human's own "add/edit a
+  // note" UI — a note authored 'claude' only ever comes from Claude
+  // writing it directly, never from picking it here, so there's no
+  // control for it, on add or on edit.
+  const author: 'user' | 'claude' = initialEntry?.kind === 'note' ? initialEntry.author : 'user';
   const [text, setText] = useState(initialEntry?.kind === 'note' ? initialEntry.text : '');
   const [symbol, setSymbol] = useState(initialEntry?.symbol ?? '');
-  const [verdict, setVerdict] = useState<ReviewVerdict>(
-    initialEntry?.kind === 'review' ? initialEntry.verdict : 'hit'
+  // '' is a real, always-available choice (the blank "—" option) — not
+  // just "not yet decided." A note can legitimately have no outcome.
+  const [verdict, setVerdict] = useState<ReviewVerdict | ''>(
+    initialEntry?.verdict ?? (kind === 'note' ? detectVerdict(text) ?? '' : 'hit')
+  );
+  // Once the user (or a prior evaluation) has settled the verdict —
+  // picked one, explicitly picked blank, or Claude already reviewed and
+  // decided none applies — auto-detection stops overwriting it on every
+  // keystroke. An explicit decision always wins over a fresh guess.
+  const [verdictTouched, setVerdictTouched] = useState(
+    initialEntry?.verdict != null || !!initialEntry?.verdictReviewed
   );
   const [summary, setSummary] = useState(initialEntry?.kind === 'review' ? initialEntry.summary : '');
   const [details, setDetails] = useState(initialEntry?.kind === 'review' ? initialEntry.details : '');
   const [sourceType, setSourceType] = useState<ReviewSourceType | ''>(
     initialEntry?.kind === 'review' ? initialEntry.sourceType ?? '' : ''
   );
-  const [sentimentEnabled, setSentimentEnabled] = useState(initialEntry?.sentiment != null);
+  // Always shown, no separate enable/disable toggle — leaving it at 0
+  // (untouched) just means "no sentiment," so it's omitted from the saved
+  // entry rather than stored as an explicit neutral (see handleSave).
   const [sentiment, setSentiment] = useState(initialEntry?.sentiment ?? 0);
+
+  useEffect(() => {
+    if (kind !== 'note' || verdictTouched) return;
+    setVerdict(detectVerdict(text) ?? '');
+  }, [text, kind, verdictTouched]);
 
   const canSave =
     kind === 'note' ? text.trim().length > 0 : symbol.trim().length > 0 && summary.trim().length > 0 && details.trim().length > 0;
@@ -288,7 +343,7 @@ const EntryForm = ({
     if (!canSave) return;
     const id = initialEntry?.id ?? genId();
     const timestamp = initialEntry?.timestamp ?? new Date().toISOString();
-    const sentimentValue = sentimentEnabled ? sentiment : undefined;
+    const sentimentValue = sentiment !== 0 ? sentiment : undefined;
     if (kind === 'note') {
       onSave({
         id,
@@ -296,6 +351,7 @@ const EntryForm = ({
         timestamp,
         symbol: symbol.trim() ? symbol.trim().toUpperCase() : undefined,
         sentiment: sentimentValue,
+        verdict: verdict || undefined,
         author,
         text: text.trim(),
       });
@@ -306,7 +362,7 @@ const EntryForm = ({
         timestamp,
         symbol: symbol.trim().toUpperCase(),
         sentiment: sentimentValue,
-        verdict,
+        verdict: verdict as ReviewVerdict,
         summary: summary.trim(),
         details: details.trim(),
         sourceType: sourceType || undefined,
@@ -328,33 +384,15 @@ const EntryForm = ({
         bgcolor: 'action.hover',
       }}
     >
-      {!initialEntry && (
-        <ToggleButtonGroup
-          size="small"
-          exclusive
-          value={kind}
-          onChange={(_, v) => v && setKind(v)}
-        >
-          <ToggleButton value="note">Note</ToggleButton>
-          <ToggleButton value="review">Review</ToggleButton>
-        </ToggleButtonGroup>
-      )}
-
       {kind === 'note' ? (
         <>
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-            <ToggleButtonGroup size="small" exclusive value={author} onChange={(_, v) => v && setAuthor(v)}>
-              <ToggleButton value="user">You</ToggleButton>
-              <ToggleButton value="claude">Claude</ToggleButton>
-            </ToggleButtonGroup>
-            <TextField
-              size="small"
-              label="Symbol (optional)"
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              sx={{ width: 140 }}
-            />
-          </Box>
+          <TextField
+            size="small"
+            label="Symbol (optional)"
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+            sx={{ width: 140 }}
+          />
           <TextField
             size="small"
             label="Note"
@@ -409,31 +447,44 @@ const EntryForm = ({
         </>
       )}
 
+      {kind === 'note' && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography variant="caption" color="text.secondary">Outcome</Typography>
+          <FormControl size="small" sx={{ minWidth: 170 }}>
+            <Select
+              value={verdict}
+              onChange={(e) => {
+                setVerdictTouched(true);
+                setVerdict(e.target.value as ReviewVerdict | '');
+              }}
+            >
+              <MenuItem value="">—</MenuItem>
+              {(Object.keys(VERDICT_LABEL) as ReviewVerdict[]).map((v) => (
+                <MenuItem key={v} value={v}>{VERDICT_LABEL[v]}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          {!verdictTouched && verdict && (
+            <Typography variant="caption" color="text.secondary">auto-detected</Typography>
+          )}
+        </Box>
+      )}
+
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-        <Chip
-          label={sentimentEnabled ? 'Sentiment' : 'Add sentiment'}
+        <Typography variant="caption" color="text.secondary">Sentiment</Typography>
+        <Slider
           size="small"
-          variant={sentimentEnabled ? 'filled' : 'outlined'}
-          clickable
-          onClick={() => setSentimentEnabled((v) => !v)}
+          value={sentiment}
+          onChange={(_, v) => setSentiment(v as number)}
+          min={-1}
+          max={1}
+          step={0.1}
+          sx={{ width: 110, color: sentiment !== 0 ? sentimentColor(sentiment) : undefined }}
         />
-        {sentimentEnabled && (
-          <>
-            <Slider
-              size="small"
-              value={sentiment}
-              onChange={(_, v) => setSentiment(v as number)}
-              min={-1}
-              max={1}
-              step={0.1}
-              sx={{ width: 110, color: sentimentColor(sentiment) }}
-            />
-            <Typography variant="caption" color="text.secondary" sx={{ minWidth: 30 }}>
-              {sentiment >= 0 ? '+' : ''}
-              {sentiment.toFixed(1)}
-            </Typography>
-          </>
-        )}
+        <Typography variant="caption" color="text.secondary" sx={{ minWidth: 30 }}>
+          {sentiment > 0 ? '+' : ''}
+          {sentiment.toFixed(1)}
+        </Typography>
       </Box>
 
       <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
@@ -473,17 +524,29 @@ export const JournalPanel: React.FC<JournalPanelProps> = ({ journal, onAdd, onUp
   };
 
   const dotColor = (entry: JournalEntry): string => {
-    if (entry.kind === 'review') return VERDICT_HEX[entry.verdict];
+    if (entry.verdict) return VERDICT_HEX[entry.verdict];
     if (entry.sentiment != null) return sentimentColor(entry.sentiment);
     return '#9e9e9e';
   };
 
   const dotIcon = (entry: JournalEntry) => {
-    if (entry.kind === 'review') {
+    if (entry.verdict) {
       const Icon = VERDICT_ICON[entry.verdict];
       return <Icon />;
     }
     return <NoteIcon />;
+  };
+
+  // A day's overall tone — averaged only across entries that actually
+  // carry a sentiment (never treating an omitted one as neutral-0, which
+  // would just dilute real signal toward gray) — reusing the same 3-bucket
+  // sentimentColor mapping the per-entry meter already uses, so the day
+  // header and its entries read as one consistent color language.
+  const dayColor = (items: JournalEntry[]): string | undefined => {
+    const scored = items.map((e) => e.sentiment).filter((s): s is number => s != null);
+    if (scored.length === 0) return undefined;
+    const avg = scored.reduce((sum, s) => sum + s, 0) / scored.length;
+    return sentimentColor(avg);
   };
 
   const groups = groupEntriesByDate(sortedDesc(journal), (e) => e.timestamp);
@@ -511,7 +574,7 @@ export const JournalPanel: React.FC<JournalPanelProps> = ({ journal, onAdd, onUp
       ) : (
         groups.map((group) => (
           <React.Fragment key={group.key}>
-            <TimelineDateHeader label={group.label} />
+            <TimelineDateHeader label={group.label} color={dayColor(group.items)} />
             {group.items.map((entry) =>
               entry.id === editingId ? (
                 <TimelineRow key={entry.id} color={dotColor(entry)} icon={dotIcon(entry)}>
