@@ -21,6 +21,12 @@ mixed in.
   `notes` is for a short earmark/description only ("scaled out half at
   2R"), never analysis of why it might move. Never fabricate a position —
   this only exists because the user said so.
+  - **On close, give brief feedback only if there's a real insight** —
+    something tying the trade to the actual structure/thesis at the time,
+    a pattern across recent trades (e.g. a run of scalps taken in chop),
+    or a risk-management observation worth reinforcing. Skip it when a
+    trade is just unremarkable — logging the close is enough, don't
+    manufacture commentary to have something to say.
 - **Balances** (`data/portfolio-balances.json`) — one entry per account,
   keyed by `account`. A fresh balance overwrites the matching account's
   entry (same convention as Thesis overwriting per symbol) — this is the
