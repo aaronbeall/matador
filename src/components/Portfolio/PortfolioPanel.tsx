@@ -1,13 +1,21 @@
-import React from 'react';
-import { Box, Typography, Chip, Divider, Stack } from '@mui/material';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Box, Typography, Chip, Divider, Stack, IconButton, Tooltip, ButtonBase, Collapse } from '@mui/material';
 import {
   TrendingUp as LongIcon,
   TrendingDown as ShortIcon,
   AccountBalanceWallet as CashIcon,
+  Refresh as RefreshIcon,
+  Link as ConnectorIcon,
+  ExpandMore as ExpandMoreIcon,
+  ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, ReferenceLine, Tooltip as RechartsTooltip } from 'recharts';
 import { Position, AccountBalance } from '../../types/Portfolio';
-import { formatPrice, formatTimestamp, formatRelativeTime } from '../../utils/formatters';
+import { formatPrice, formatTimestamp, formatRelativeTime, formatDelta } from '../../utils/formatters';
+import { CHART_COLORS } from '../../constants/colors';
+import { getQuote } from '../../services/dataApi';
 import { SymbolBadge } from '../SymbolBadge';
+import { groupEntriesByDate, TimelineDateHeader, TimelineRow } from '../Timeline';
 
 interface PortfolioPanelProps {
   positions: Position[];
@@ -55,6 +63,146 @@ const CashSummary = ({ balances }: { balances: AccountBalance[] }) => {
   );
 };
 
+const PLStat = ({ label, value, loading }: { label: string; value: number | null; loading?: boolean }) => (
+  <Box>
+    <Typography variant="caption" color="text.secondary" component="div">{label}</Typography>
+    {loading ? (
+      <Typography variant="body1" fontWeight={700} color="text.secondary">…</Typography>
+    ) : value == null ? (
+      <Typography variant="body1" color="text.secondary">—</Typography>
+    ) : (
+      <Typography
+        variant="body1"
+        fontWeight={700}
+        sx={{ color: value >= 0 ? 'success.main' : 'error.main' }}
+      >
+        {formatDelta(value, formatPrice)}
+      </Typography>
+    )}
+  </Box>
+);
+
+// Realized P&L (sum of closed positions' recorded realizedPL — never
+// recomputed, just totaled) plus unrealized P&L on open SHARES positions,
+// priced from a live quote fetched here. Open OPTIONS positions are
+// deliberately excluded from unrealized — this app has no live
+// options-chain data to price them from, so making up a number would be
+// worse than just saying so.
+const PnLSummary = ({ open, closed }: { open: Position[]; closed: Position[] }) => {
+  const closedWithPL = closed.filter((p) => p.realizedPL != null);
+  const realizedTotal = closedWithPL.reduce((sum, p) => sum + p.realizedPL!, 0);
+  const wins = closedWithPL.filter((p) => p.realizedPL! >= 0).length;
+  const losses = closedWithPL.length - wins;
+
+  const openShares = open.filter((p) => p.instrument === 'shares');
+  const openOptionsCount = open.length - openShares.length;
+  const symbols = [...new Set(openShares.map((p) => p.symbol))];
+
+  const [quotes, setQuotes] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(false);
+  const symbolsKey = symbols.join(',');
+
+  const refreshQuotes = useCallback(async () => {
+    if (!symbolsKey) {
+      setQuotes({});
+      return;
+    }
+    setLoading(true);
+    const results = await Promise.all(
+      symbolsKey.split(',').map(async (s) => [s, (await getQuote(s))?.c] as const)
+    );
+    setQuotes(Object.fromEntries(results.filter(([, c]) => c != null)) as Record<string, number>);
+    setLoading(false);
+  }, [symbolsKey]);
+
+  useEffect(() => {
+    refreshQuotes();
+  }, [refreshQuotes]);
+
+  let unrealizedTotal = 0;
+  let unrealizedPriced = 0;
+  for (const p of openShares) {
+    const quote = quotes[p.symbol];
+    if (quote == null) continue;
+    unrealizedTotal += (p.direction === 'long' ? quote - p.entryPrice : p.entryPrice - quote) * p.quantity;
+    unrealizedPriced++;
+  }
+  const hasUnrealized = openShares.length > 0;
+
+  if (closedWithPL.length === 0 && openShares.length === 0 && openOptionsCount === 0) return null;
+
+  // Cumulative realized P&L over time, by exit — the one thing genuinely
+  // computable from what's actually been recorded, no live pricing needed.
+  // Anchored with a real zero-baseline point at the first trade's own
+  // entry time, so even a single closed trade draws an actual line (start
+  // at 0, end at its P&L) instead of needing a second trade just to have
+  // two points to connect.
+  const sortedClosed = [...closedWithPL].sort((a, b) => (a.exitAt! < b.exitAt! ? -1 : 1));
+  const chartData =
+    sortedClosed.length === 0
+      ? []
+      : sortedClosed.reduce<{ date: string; cumulative: number }[]>(
+          (acc, p) => {
+            const prev = acc[acc.length - 1].cumulative;
+            acc.push({ date: p.exitAt!, cumulative: prev + p.realizedPL! });
+            return acc;
+          },
+          [{ date: sortedClosed[0].entryAt, cumulative: 0 }]
+        );
+
+  return (
+    <Box sx={{ pb: 1.5 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+        <PLStat label="Realized P&L" value={closedWithPL.length > 0 ? realizedTotal : null} />
+        {hasUnrealized && (
+          <PLStat label="Unrealized P&L" value={unrealizedPriced > 0 ? unrealizedTotal : null} loading={loading} />
+        )}
+        {closedWithPL.length > 0 && (
+          <Typography variant="caption" color="text.secondary">
+            {wins}W / {losses}L
+          </Typography>
+        )}
+        {hasUnrealized && (
+          <Tooltip title="Refresh quotes">
+            <IconButton size="small" onClick={refreshQuotes} sx={{ p: 0.25 }}>
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
+      </Box>
+      {openOptionsCount > 0 && (
+        <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.25 }}>
+          {openOptionsCount} open option position{openOptionsCount === 1 ? '' : 's'} not priced — no live
+          options-chain data.
+        </Typography>
+      )}
+      {chartData.length > 1 && (
+        <Box sx={{ mt: 1, height: 90 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
+              <ReferenceLine y={0} stroke="rgba(128,128,128,0.4)" />
+              <XAxis dataKey="date" hide />
+              <YAxis hide domain={['auto', 'auto']} />
+              <RechartsTooltip
+                formatter={(v: number) => formatPrice(v)}
+                labelFormatter={(l: string) => formatTimestamp(l)}
+                contentStyle={{ fontSize: 12 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="cumulative"
+                stroke={realizedTotal >= 0 ? CHART_COLORS.priceUp : CHART_COLORS.priceDown}
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </Box>
+      )}
+    </Box>
+  );
+};
+
 const PositionCard = ({ position }: { position: Position }) => {
   const DirIcon = position.direction === 'long' ? LongIcon : ShortIcon;
   const plColor = position.realizedPL == null ? 'text.secondary' : position.realizedPL >= 0 ? 'success.main' : 'error.main';
@@ -88,6 +236,76 @@ const PositionCard = ({ position }: { position: Position }) => {
 const sortedDesc = (positions: Position[], key: (p: Position) => string) =>
   [...positions].sort((a, b) => (key(a) < key(b) ? 1 : -1));
 
+// Which accounts this data actually comes from, and how — every one is
+// "Manual" today (Claude relaying what you tell it), since there's no
+// real broker integration yet. Derived straight from the account names
+// already on balances/positions rather than a separate config file — a
+// real connector (an actual synced broker link) is a genuinely different,
+// not-yet-built feature, not something to scaffold ahead of need.
+// A true overlay, not part of the scrolling content — pinned to the
+// bottom edge of the whole panel (the sidebar pane itself, via the
+// `position: relative` ancestor App.tsx sets on it) regardless of scroll
+// position or how little content is above it. Collapsed by default;
+// expanding grows upward from that fixed bottom edge, the way a bottom
+// sheet does, rather than pushing the page down. This is account config/
+// meta, not something to compete with cash/positions for attention on
+// every visit, but always reachable in the same place.
+const ConnectorsSection = ({ balances, positions }: { balances: AccountBalance[]; positions: Position[] }) => {
+  const [open, setOpen] = useState(false);
+  const accounts = [...new Set([
+    ...balances.map((b) => b.account),
+    ...positions.map((p) => p.account).filter((a): a is string => !!a),
+  ])];
+  if (accounts.length === 0) return null;
+
+  return (
+    <Box
+      sx={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 2,
+        px: 2,
+        pt: 1,
+        pb: 1,
+        bgcolor: 'background.paper',
+        borderTop: '1px solid',
+        borderColor: 'divider',
+        boxShadow: '0 -4px 12px rgba(0,0,0,0.25)',
+      }}
+    >
+      <ButtonBase
+        onClick={() => setOpen((v) => !v)}
+        sx={{ display: 'flex', alignItems: 'center', gap: 0.5, width: '100%', justifyContent: 'space-between' }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <ConnectorIcon fontSize="small" color="action" />
+          <Typography variant="overline" color="text.secondary">
+            Connectors ({accounts.length})
+          </Typography>
+        </Box>
+        {open ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+      </ButtonBase>
+      <Collapse in={open}>
+        <Box sx={{ pt: 0.5, maxHeight: 240, overflow: 'auto' }}>
+          {accounts.map((account) => (
+            <Box key={account} sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.75 }}>
+              <ConnectorIcon fontSize="small" color="action" />
+              <Typography variant="body2" fontWeight={600}>{account}</Typography>
+              <Chip label="Manual" size="small" variant="outlined" />
+            </Box>
+          ))}
+          <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
+            Tracked manually — tell Claude a balance or trade to keep it in sync. Real broker sync isn't
+            built yet.
+          </Typography>
+        </Box>
+      </Collapse>
+    </Box>
+  );
+};
+
 // The one place that reflects only real account state — actual open/
 // closed positions and actual cash, nothing analytical or speculative
 // (that's Thesis/Ideas/Journal). Written directly by Claude in
@@ -99,8 +317,11 @@ export const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ positions, balan
   const closed = sortedDesc(positions.filter((p) => p.status === 'closed'), (p) => p.exitAt ?? p.entryAt);
 
   return (
-    <Box>
+    // Bottom padding clears the fixed Connectors overlay bar so the end
+    // of trade history doesn't render underneath it.
+    <Box sx={{ pb: 5 }}>
       <CashSummary balances={balances} />
+      <PnLSummary open={open} closed={closed} />
       <Divider sx={{ mb: 1 }} />
 
       <Typography variant="overline" color="text.secondary">Open Positions</Typography>
@@ -121,14 +342,20 @@ export const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ positions, balan
         <>
           <Divider sx={{ my: 1 }} />
           <Typography variant="overline" color="text.secondary">Trade History</Typography>
-          {closed.map((p) => (
-            <React.Fragment key={p.id}>
-              <Divider />
-              <PositionCard position={p} />
+          {groupEntriesByDate(closed, (p) => p.exitAt ?? p.entryAt).map((group) => (
+            <React.Fragment key={group.key}>
+              <TimelineDateHeader label={group.label} />
+              {group.items.map((p) => (
+                <TimelineRow key={p.id} color={p.realizedPL == null ? '#9e9e9e' : p.realizedPL >= 0 ? '#4caf50' : '#f44336'}>
+                  <PositionCard position={p} />
+                </TimelineRow>
+              ))}
             </React.Fragment>
           ))}
         </>
       )}
+
+      <ConnectorsSection balances={balances} positions={positions} />
     </Box>
   );
 };

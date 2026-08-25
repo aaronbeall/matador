@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Accordion, AccordionSummary, AccordionDetails, Typography, Chip } from '@mui/material';
 import { ExpandMore as ExpandMoreIcon } from '@mui/icons-material';
 import { Skill } from '../../types/Skill';
+import { MarkdownFileView } from '../MarkdownFileView';
 
 interface SkillsPanelProps {
   skills: Skill[];
@@ -31,21 +32,7 @@ export const SkillsPanel: React.FC<SkillsPanelProps> = ({ skills }) => {
             </Box>
           </AccordionSummary>
           <AccordionDetails>
-            <Box
-              component="pre"
-              sx={{
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                fontFamily: 'ui-monospace, monospace',
-                fontSize: '0.75rem',
-                lineHeight: 1.5,
-                m: 0,
-                maxHeight: 400,
-                overflow: 'auto',
-              }}
-            >
-              {skill.content}
-            </Box>
+            <MarkdownFileView path={skill.path} content={skill.content} loading={false} error={null} />
           </AccordionDetails>
         </Accordion>
       ))}

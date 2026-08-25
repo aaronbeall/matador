@@ -92,6 +92,8 @@ export interface Alert {
   createdAt: string; // ISO timestamp
   triggeredAt?: string; // ISO timestamp — set when status becomes 'triggered'
   invalidatedAt?: string; // ISO timestamp — set when status becomes 'invalidated'
+  expiredAt?: string; // ISO timestamp — set by the engine when it actually detects the expiry, not the deadline itself
+  supersededAt?: string; // ISO timestamp — set by Claude when manually marking an alert superseded
   // The condition's valid window: not evaluated before activeFrom (defaults
   // to createdAt — i.e. active immediately — if omitted), auto-expires
   // after expiresAt regardless of whether it ever fired. Time-boxing a
@@ -102,7 +104,6 @@ export interface Alert {
   // ORB signal rather than an unrelated late-day level cross.
   activeFrom?: string; // ISO timestamp
   expiresAt: string; // ISO timestamp — required; inherit the related idea's, or set one deliberately
-  acknowledged: boolean;
 }
 
 export type Alerts = Alert[];

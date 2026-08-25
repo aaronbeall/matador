@@ -29,7 +29,6 @@ import {
 import {
   Brightness4,
   Brightness7,
-  SmartToy,
   CheckCircle as CheckIcon,
   Cancel as CancelIcon,
   Refresh as RefreshIcon,
@@ -50,6 +49,7 @@ import {
   Extension as SkillsIcon,
   AutoStories as JournalIcon,
   AccountBalanceWallet as PortfolioIcon,
+  SmartToy as InstructionsIcon,
   NotificationsActive as NotificationsOnIcon,
   NotificationsOff as NotificationsOffIcon,
   ChevronRight as CollapseIcon,
@@ -74,7 +74,7 @@ import { getPatternColor } from './components/PatternVisuals';
 import { computeAutoLevels } from './utils/autoLevels';
 import { CHART_COLORS } from './constants/colors';
 import { PATTERN_INFO, PatternStrength } from './constants/patterns';
-import { formatPrice, formatVolume, formatDelta, formatPercent, formatTimestamp } from './utils/formatters';
+import { formatPrice, formatVolume, formatDelta, formatPercent, formatTimestamp, formatRelativeTime } from './utils/formatters';
 import { INDICATOR_DEFS } from './constants/indicators';
 import { MACDHistogramBar } from './components/MACDHistogramBar';
 import { WatchlistPanel } from './components/Watchlist/WatchlistPanel';
@@ -87,6 +87,7 @@ import { ActivityPanel } from './components/Activity/ActivityPanel';
 import { SkillsPanel } from './components/Skills/SkillsPanel';
 import { JournalPanel } from './components/Journal/JournalPanel';
 import { PortfolioPanel } from './components/Portfolio/PortfolioPanel';
+import { InstructionsPanel } from './components/Instructions/InstructionsPanel';
 import { SidebarNav, SidebarNavItem } from './components/Sidebar/SidebarNav';
 import { SkillTip } from './components/Sidebar/SkillTip';
 import { ConnectionDiagnostics } from './components/ConnectionDiagnostics/ConnectionDiagnostics';
@@ -108,19 +109,20 @@ import {
   getLevels,
   getAlerts,
   getThesis,
-  saveAlerts,
   getAnalysisLog,
   getSkills,
   getJournal,
+  saveJournal,
   getPortfolioPositions,
   getAccountBalances,
+  getAgentInstructions,
   rebuildMarketData,
   subscribeToDataEvents,
 } from './services/dataApi';
 
 type TimeFrame = '15m' | '1h' | '3h' | '6h' | '1d' | '1w';
 type ChartMode = 'candles' | 'lines' | 'both';
-type SidebarTab = 'watchlist' | 'strategy' | 'thesis' | 'ideas' | 'levels' | 'alerts' | 'journal' | 'portfolio' | 'activity' | 'skills';
+type SidebarTab = 'watchlist' | 'strategy' | 'thesis' | 'ideas' | 'levels' | 'alerts' | 'journal' | 'portfolio' | 'activity' | 'skills' | 'instructions';
 // Tabs whose "new since last looked" state is worth tracking — Watchlist
 // and Strategy are directly user/Claude-edited, not "arrived" content.
 const TRACKED_TABS: SidebarTab[] = ['thesis', 'ideas', 'levels', 'journal', 'portfolio', 'activity'];
@@ -146,7 +148,7 @@ const SIDEBAR_TAB_STORAGE_KEY = 'matador-sidebar-tab';
 const VALID_TIME_INTERVALS: TimeInterval[] = ['1m', '5m', '15m', '1h', '1d', '1w'];
 const VALID_TIME_FRAMES: TimeFrame[] = ['15m', '1h', '3h', '6h', '1d', '1w'];
 const VALID_CHART_MODES: ChartMode[] = ['candles', 'lines', 'both'];
-const VALID_SIDEBAR_TABS: SidebarTab[] = ['watchlist', 'strategy', 'thesis', 'ideas', 'levels', 'alerts', 'journal', 'portfolio', 'activity', 'skills'];
+const VALID_SIDEBAR_TABS: SidebarTab[] = ['watchlist', 'strategy', 'thesis', 'ideas', 'levels', 'alerts', 'journal', 'portfolio', 'activity', 'skills', 'instructions'];
 
 function readStoredString<T extends string>(key: string, valid: T[], fallback: T): T {
   const stored = localStorage.getItem(key);
@@ -380,9 +382,14 @@ const AppContent = () => {
     document.addEventListener('mouseup', onUp);
   }, [sidebarWidth]);
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
+  const [strategyPath, setStrategyPath] = useState<string | null>(null);
   const [strategyText, setStrategyText] = useState<string | null>(null);
   const [strategyLoading, setStrategyLoading] = useState(false);
   const [strategyError, setStrategyError] = useState<string | null>(null);
+  const [agentInstructionsPath, setAgentInstructionsPath] = useState<string | null>(null);
+  const [agentInstructionsText, setAgentInstructionsText] = useState<string | null>(null);
+  const [agentInstructionsLoading, setAgentInstructionsLoading] = useState(false);
+  const [agentInstructionsError, setAgentInstructionsError] = useState<string | null>(null);
   const [tradeIdeas, setTradeIdeas] = useState<TradeIdea[]>([]);
   const [thesis, setThesis] = useState<Thesis[]>([]);
   const [levels, setLevels] = useState<LevelType[]>([]);
@@ -432,7 +439,10 @@ const AppContent = () => {
   const levelsNewCount = levels.filter(
     (l) => l.active && l.createdAt > (lastSeenAt.levels ?? '')
   ).length;
-  const alertsUnacknowledgedCount = alerts.filter((a) => !a.acknowledged).length;
+  // Triggered alerts stay 'triggered' until something actually resolves
+  // them (invalidated/expired/superseded) — no separate acknowledge flag
+  // — so this counts what's actively live and unresolved right now.
+  const alertsTriggeredCount = alerts.filter((a) => a.status === 'triggered').length;
   const journalNewCount = journal.filter((e) => e.timestamp > (lastSeenAt.journal ?? '')).length;
   const portfolioNewCount = portfolioPositions.filter(
     (p) => (p.exitAt ?? p.entryAt) > (lastSeenAt.portfolio ?? '')
@@ -451,11 +461,12 @@ const AppContent = () => {
     { value: 'thesis', label: 'Thesis', icon: <ThesisIcon />, badgeCount: thesisNewCount },
     { value: 'ideas', label: 'Ideas', icon: <IdeasIcon />, badgeCount: ideasNewCount },
     { value: 'levels', label: 'Levels', icon: <LevelsIcon />, badgeCount: levelsNewCount },
-    { value: 'alerts', label: 'Alerts', icon: <AlertsIcon />, badgeCount: alertsUnacknowledgedCount },
+    { value: 'alerts', label: 'Alerts', icon: <AlertsIcon />, badgeCount: alertsTriggeredCount },
     { value: 'journal', label: 'Journal', icon: <JournalIcon />, badgeCount: journalNewCount },
     { value: 'portfolio', label: 'Portfolio', icon: <PortfolioIcon />, badgeCount: portfolioNewCount },
     { value: 'activity', label: 'Activity', icon: <ActivityIcon />, badgeCount: activityNewCount },
     { value: 'skills', label: 'Skills', icon: <SkillsIcon /> },
+    { value: 'instructions', label: 'Agent', icon: <InstructionsIcon /> },
   ];
 
   const fetchCurrentPrice = useCallback(async () => {
@@ -562,12 +573,26 @@ const AppContent = () => {
       setStrategyLoading((prev) => (only ? prev : true));
       tasks.push(
         getStrategy()
-          .then((text) => {
-            setStrategyText(text);
+          .then(({ path, content }) => {
+            setStrategyPath(path);
+            setStrategyText(content);
             setStrategyError(null);
           })
           .catch(() => setStrategyError('Failed to load data/strategy.md'))
           .finally(() => setStrategyLoading(false))
+      );
+    }
+    if (!only || only === 'agent-instructions') {
+      setAgentInstructionsLoading((prev) => (only ? prev : true));
+      tasks.push(
+        getAgentInstructions()
+          .then(({ path, content }) => {
+            setAgentInstructionsPath(path);
+            setAgentInstructionsText(content);
+            setAgentInstructionsError(null);
+          })
+          .catch(() => setAgentInstructionsError('Failed to load CLAUDE.md'))
+          .finally(() => setAgentInstructionsLoading(false))
       );
     }
     if (!only || only === 'trade-ideas') {
@@ -630,10 +655,26 @@ const AppContent = () => {
     return () => clearInterval(interval);
   }, [refreshAnalysisData]);
 
-  const handleAcknowledgeAlert = useCallback((id: string) => {
-    setAlerts((prev) => {
-      const next = prev.map((a) => (a.id === id ? { ...a, acknowledged: true } : a));
-      saveAlerts(next).catch(() => {});
+  const handleAddJournalEntry = useCallback((entry: JournalEntry) => {
+    setJournal((prev) => {
+      const next = [...prev, entry];
+      saveJournal(next).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const handleUpdateJournalEntry = useCallback((entry: JournalEntry) => {
+    setJournal((prev) => {
+      const next = prev.map((e) => (e.id === entry.id ? entry : e));
+      saveJournal(next).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const handleDeleteJournalEntry = useCallback((id: string) => {
+    setJournal((prev) => {
+      const next = prev.filter((e) => e.id !== id);
+      saveJournal(next).catch(() => {});
       return next;
     });
   }, []);
@@ -651,14 +692,17 @@ const AppContent = () => {
   const notifiedAlertIds = useRef<Set<string> | null>(null);
   // Tracks currently-open OS notifications by alert id so a stale one can
   // be actively closed (not just prevented from popping again) once its
-  // alert is superseded/expired/acknowledged/removed — `tag` alone only
-  // stops duplicate popups, it doesn't dismiss one already on screen.
+  // alert resolves (superseded/expired/invalidated) or is removed — `tag`
+  // alone only stops duplicate popups, it doesn't dismiss one already on
+  // screen. This is also what the Alerts panel's faded state reflects —
+  // no acknowledge flag, just "is this alert still live."
   const openNotifications = useRef<Map<string, Notification>>(new Map());
 
   useEffect(() => {
     for (const [id, notification] of openNotifications.current) {
       const alert = alerts.find((a) => a.id === id);
-      const stale = !alert || alert.status === 'superseded' || alert.status === 'expired' || alert.acknowledged;
+      const stale =
+        !alert || alert.status === 'superseded' || alert.status === 'expired' || alert.status === 'invalidated';
       if (stale) {
         notification.close();
         openNotifications.current.delete(id);
@@ -669,9 +713,9 @@ const AppContent = () => {
     // "already seen" baseline. `alerts` starts as `[]` until
     // refreshAnalysisData's first fetch resolves — seeding the baseline
     // from that empty snapshot instead of the real one meant every
-    // already-triggered, unacknowledged alert on disk got treated as
-    // brand new the instant real data arrived, notifying for all of them
-    // at once on every single page load.
+    // already-triggered alert on disk got treated as brand new the instant
+    // real data arrived, notifying for all of them at once on every single
+    // page load.
     if (!analysisDataUpdatedAt) return;
 
     // First run (now against real data): remember every alert already
@@ -685,7 +729,7 @@ const AppContent = () => {
     if (!notificationsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
 
     for (const alert of alerts) {
-      if (alert.status !== 'triggered' || alert.acknowledged) continue;
+      if (alert.status !== 'triggered') continue;
       if (notifiedAlertIds.current.has(alert.id)) continue;
       notifiedAlertIds.current.add(alert.id);
 
@@ -1364,7 +1408,17 @@ const AppContent = () => {
                   />
                 )}
                 {hoveredCandle && (
-                  <ReferenceLine x={hoveredCandle.timestamp} stroke="#9e9e9e" strokeDasharray="2 2" />
+                  <ReferenceLine
+                    x={hoveredCandle.timestamp}
+                    stroke="#9e9e9e"
+                    strokeDasharray="2 2"
+                    label={{
+                      value: formatRelativeTime(new Date(hoveredCandle.timestamp).toISOString()),
+                      position: 'top',
+                      fill: '#9e9e9e',
+                      fontSize: 11,
+                    }}
+                  />
                 )}
                 {levels
                   .filter((level) => level.active && level.symbol === symbol)
@@ -1712,7 +1766,7 @@ const AppContent = () => {
               transition: 'background-color 0.15s',
             }}
           />
-          <Box sx={{ width: sidebarWidth, flexShrink: 0, height: '100%', display: 'flex', bgcolor: 'background.paper' }}>
+          <Box sx={{ width: sidebarWidth, flexShrink: 0, height: '100%', display: 'flex', bgcolor: 'background.paper', position: 'relative' }}>
             <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
               <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <MuiTooltip title="Collapse panel">
@@ -1744,7 +1798,12 @@ const AppContent = () => {
                     Edited by Claude directly when you discuss strategy changes in chat — no skill needed, just talk
                     through the change.
                   </SkillTip>
-                  <StrategyPanel strategyText={strategyText} loading={strategyLoading} error={strategyError} />
+                  <StrategyPanel
+                    strategyPath={strategyPath}
+                    strategyText={strategyText}
+                    loading={strategyLoading}
+                    error={strategyError}
+                  />
                 </>
               )}
               {sidebarTab === 'thesis' && (
@@ -1779,20 +1838,26 @@ const AppContent = () => {
                 <>
                   <SkillTip>
                     Also written by <code>find-trades</code> — notable events like a new idea or price nearing a
-                    level. Enable the bell icon (top right) for real desktop notifications on new ones. Acknowledging
-                    one here doesn't need a skill.
+                    level. Enable the bell icon (top right) for real desktop notifications on new ones. Faded
+                    ones have already resolved (invalidated, expired, or superseded) — nothing to act on.
                   </SkillTip>
-                  <AlertsPanel alerts={alerts} onAcknowledge={handleAcknowledgeAlert} />
+                  <AlertsPanel alerts={alerts} />
                 </>
               )}
               {sidebarTab === 'journal' && (
                 <>
                   <SkillTip>
                     Freeform notes worth remembering, plus Claude's own self-graded reviews of past thesis/
-                    alert calls against what actually happened. No skill run needed. For real trades and
-                    account balance, see Portfolio instead.
+                    alert calls against what actually happened. Kept up to date by Claude in chat, or add/
+                    edit/delete entries directly here. For real trades and account balance, see Portfolio
+                    instead.
                   </SkillTip>
-                  <JournalPanel journal={journal} />
+                  <JournalPanel
+                    journal={journal}
+                    onAdd={handleAddJournalEntry}
+                    onUpdate={handleUpdateJournalEntry}
+                    onDelete={handleDeleteJournalEntry}
+                  />
                 </>
               )}
               {sidebarTab === 'portfolio' && (
@@ -1822,6 +1887,22 @@ const AppContent = () => {
                     itself.
                   </SkillTip>
                   <SkillsPanel skills={skills} />
+                </>
+              )}
+              {sidebarTab === 'instructions' && (
+                <>
+                  <SkillTip>
+                    The standing project instructions the agent actually follows in every session — this
+                    is what governs when Journal/Portfolio/Thesis get kept up to date without a skill run.
+                    Read-only here; edited directly in the repo (<code>CLAUDE.md</code>) when the
+                    conventions change.
+                  </SkillTip>
+                  <InstructionsPanel
+                    path={agentInstructionsPath}
+                    text={agentInstructionsText}
+                    loading={agentInstructionsLoading}
+                    error={agentInstructionsError}
+                  />
                 </>
               )}
             </Box>

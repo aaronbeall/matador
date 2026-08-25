@@ -16,6 +16,14 @@ interface JournalEntryBase {
   timestamp: string; // ISO — when the entry was written, not necessarily when the thing happened
   // Omitted entirely for general/market-wide notes not tied to one name.
   symbol?: string;
+  // Optional emotional/directional tone of the entry, -1 (very negative)
+  // to +1 (very positive), 0 = neutral. Not a market direction (see
+  // Direction/bias elsewhere) — this is about the entry's own tone: a
+  // relayed loss reads negative, a hit/dodged-trap review reads positive,
+  // a plain factual note can just omit it. When Claude writes an entry on
+  // the user's behalf, set this from a genuine read of the tone in what
+  // was said — see CLAUDE.md.
+  sentiment?: number;
 }
 
 // Freeform — either the user's own words relayed in conversation, or a
@@ -33,14 +41,16 @@ export interface JournalNoteEntry extends JournalEntryBase {
 // "hits and misses" mechanism — the whole point of the feature.
 export type ReviewVerdict = 'hit' | 'miss' | 'missed-opportunity' | 'dodged-trap';
 
+// What's being graded, loosely — not a hard foreign key, just context.
+export type ReviewSourceType = 'thesis' | 'alert' | 'idea';
+
 export interface JournalReviewEntry extends JournalEntryBase {
   kind: 'review';
   symbol: string;
   verdict: ReviewVerdict;
   summary: string; // one line: the call vs. the outcome
   details: string; // the fuller comparison — what was said, what happened, why it's graded this way
-  // What's being graded, loosely — not a hard foreign key, just context.
-  sourceType?: 'thesis' | 'alert' | 'idea';
+  sourceType?: ReviewSourceType;
 }
 
 export type JournalEntry = JournalNoteEntry | JournalReviewEntry;

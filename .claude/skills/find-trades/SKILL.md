@@ -246,11 +246,13 @@ On-demand only — there is no scheduled/cron version of this yet.
      alerts for a symbol, check its existing `pending` entries: if a setup
      is no longer valid (level broken the wrong way, the related idea
      itself got invalidated or expired), set that alert's `status:
-     'superseded'` rather than leaving it hanging — an open desktop
-     notification tied to a triggered-then-superseded alert gets actively
-     closed on the frontend when this happens, and a lingering pending one
-     just keeps getting checked for nothing. This is what keeps repeated
-     scans from accumulating near-duplicate alerts for the same condition.
+     'superseded'` and `supersededAt: <now>` rather than leaving it
+     hanging — an open desktop notification tied to a triggered-then-
+     superseded alert gets actively closed on the frontend when this
+     happens, and a lingering pending one just keeps getting checked for
+     nothing. This is what keeps repeated scans from accumulating
+     near-duplicate alerts for the same condition. `supersededAt` is what
+     lets the UI show exactly when it was resolved, not just that it was.
 
 7. **Append to `data/thesis.json` — the standing read, not a proposal.**
    Independent of whether a trade idea qualified this run: append a new

@@ -75,3 +75,15 @@ Before proposing new setups, or exercising the discretion
 entries — a pattern of `missed-opportunity` or `miss` verdicts against a
 particular kind of setup should actively change what gets proposed next,
 not just sit there as trivia.
+
+**Sentiment**: every entry has an optional `sentiment` field, -1 (very
+negative) to +1 (very positive), 0 = neutral — the entry's own emotional
+tone, not a market direction. Whenever you write an entry on the user's
+behalf (either kind), set it from a genuine read of the actual tone in
+what was said or found — a relayed loss or frustration reads negative, a
+hit/dodged-trap review or relayed win reads positive, routine factual
+content can just omit it rather than forcing a number. Don't flatten
+everything to the extremes — most things are mildly one way or the other,
+not -1/+1. This is a real signal worth getting right, not decoration: a
+run of negative-sentiment entries is itself worth noticing (e.g. before
+exercising discretion on a new setup while the user's clearly frustrated).

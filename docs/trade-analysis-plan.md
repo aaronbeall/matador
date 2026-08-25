@@ -40,8 +40,11 @@ trading data or strategy specifics get committed):
   cross, an indicator crossover/threshold). A background engine
   (`vite-plugins/marketData/alertsEngine.ts`) evaluates pending conditions
   against fresh data and flips them to triggered — that's what actually
-  fires a desktop notification, not the alert's creation. Severity-tagged,
-  acknowledgeable from the UI.
+  fires a desktop notification, not the alert's creation. Severity-tagged;
+  also carries an optional `invalidation` condition (the competing
+  scenario, evaluated the same way) that resolves it live without its own
+  condition ever firing. No manual acknowledge — the UI fades an alert
+  once it's actually resolved (invalidated/expired/superseded).
 - `analysis-log.json` — a run log of what the skill actually did per
   symbol per invocation, including "no data" / "no qualifying setup" —
   so the UI shows the system's reasoning, not just its hits.
@@ -66,8 +69,9 @@ trading data or strategy specifics get committed):
 
 The filesystem is the single source of truth. The Claude skill writes to
 it directly (filesystem access when chatting in-repo). The frontend
-writes back too (alert acknowledgement today; idea status updates from
-clicking "taken"/"skipped" are still open — see `TODO.md`).
+writes back too (full add/edit/delete on Journal entries today; idea
+status updates from clicking "taken"/"skipped" are still open — see
+`TODO.md`).
 
 ## Bridge (frontend ↔ shared state)
 
@@ -192,7 +196,7 @@ rather than replacing it. New pieces:
 - **Levels panel** — support/resistance levels across the watchlist;
   active levels for the on-screen symbol also render as reference lines
   directly on the chart
-- **Alerts panel** — notable events, acknowledgeable
+- **Alerts panel** — notable events; fades once resolved (invalidated/expired/superseded)
 - **Activity panel** — the `analysis-log.json` run history, so "nothing
   qualified" is visible, not silent
 - Kept fresh via SSE push + refetch-on-focus + a 60s poll fallback (see

@@ -96,7 +96,7 @@ export function evaluateAlertsForSymbol(symbol: string, snapshot: AnalysisSnapsh
 
     if (Date.parse(alert.expiresAt) < now) {
       changed = true;
-      return { ...alert, status: 'expired' };
+      return { ...alert, status: 'expired', expiredAt: new Date(now).toISOString() };
     }
 
     // Invalidation isn't gated by activeFrom — the competing scenario can

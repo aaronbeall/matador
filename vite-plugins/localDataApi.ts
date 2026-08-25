@@ -23,6 +23,13 @@ import { getSkills, skillsDir } from './skillsReader';
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const CANDLES_DIR = path.join(DATA_DIR, 'candles');
 const STRATEGY_PATH = path.join(DATA_DIR, 'strategy.md');
+// The agent's standing instructions — what actually governs keeping
+// Journal/Portfolio/Thesis/etc. up to date in conversation without a
+// skill run. Exposed read-only so you can review what's actually being
+// followed, same convention as strategy.md. Lives at the project root as
+// CLAUDE.md (the Claude Code convention for this), outside data/, so it
+// needs its own watch below rather than piggybacking on watchDataDir's.
+const CLAUDE_MD_PATH = path.resolve(process.cwd(), 'CLAUDE.md');
 
 // route name -> filename. The route is also what gets reported to SSE
 // subscribers when the underlying file changes, so the frontend knows
@@ -124,6 +131,15 @@ function watchSkillsDir() {
   }
 }
 
+function watchAgentInstructions() {
+  if (!fs.existsSync(CLAUDE_MD_PATH)) return;
+  try {
+    fs.watch(CLAUDE_MD_PATH, () => broadcast('agent-instructions'));
+  } catch (err) {
+    console.warn('[local-data-api] fs.watch on CLAUDE.md unavailable:', err);
+  }
+}
+
 export function localDataApi(): Plugin {
   return {
     name: 'local-data-api',
@@ -131,6 +147,7 @@ export function localDataApi(): Plugin {
       ensureDataFiles();
       watchDataDir();
       watchSkillsDir();
+      watchAgentInstructions();
 
       // GET the list of Claude skills for this project (.claude/skills/*/SKILL.md)
       // — documentation, not app state; there's nothing to POST here.
@@ -187,8 +204,10 @@ export function localDataApi(): Plugin {
         });
       }
 
-      // GET raw strategy.md — read-only from the frontend's perspective;
-      // Claude edits this file directly per docs/trade-analysis-plan.md.
+      // GET strategy.md — read-only from the frontend's perspective; Claude
+      // edits this file directly per docs/trade-analysis-plan.md. Returns
+      // the absolute path alongside the content so the UI can render a
+      // file:// link back to it, not just the raw markdown.
       server.middlewares.use('/api/strategy', (req, res) => {
         if (req.method !== 'GET') {
           res.statusCode = 405;
@@ -199,9 +218,23 @@ export function localDataApi(): Plugin {
           sendJson(res, 404, { error: 'data/strategy.md not found' });
           return;
         }
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-        res.end(fs.readFileSync(STRATEGY_PATH, 'utf-8'));
+        sendJson(res, 200, { path: STRATEGY_PATH, content: fs.readFileSync(STRATEGY_PATH, 'utf-8') });
+      });
+
+      // GET the agent's raw standing instructions (CLAUDE.md) — read-only
+      // from the frontend's perspective; exposed for review, same
+      // convention as strategy.md above.
+      server.middlewares.use('/api/agent-instructions', (req, res) => {
+        if (req.method !== 'GET') {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+        if (!fs.existsSync(CLAUDE_MD_PATH)) {
+          sendJson(res, 404, { error: 'CLAUDE.md not found' });
+          return;
+        }
+        sendJson(res, 200, { path: CLAUDE_MD_PATH, content: fs.readFileSync(CLAUDE_MD_PATH, 'utf-8') });
       });
     },
   };

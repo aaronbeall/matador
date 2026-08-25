@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { Box, Typography, Chip, IconButton, Tooltip, Collapse, Divider } from '@mui/material';
+import { Box, Typography, Chip, ButtonBase, Tooltip, Collapse, Divider } from '@mui/material';
 import {
-  Check as CheckIcon,
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
   TrendingUp as TrendingUpIcon,
@@ -9,6 +8,7 @@ import {
   TrendingFlat as TrendingFlatIcon,
   InfoOutlined as InfoIcon,
   Schedule as PendingIcon,
+  AddCircleOutline as CreatedIcon,
   Bolt as TriggeredIcon,
   Block as InvalidatedIcon,
   SwapHoriz as SupersededIcon,
@@ -22,7 +22,6 @@ import { SymbolBadge } from '../SymbolBadge';
 
 interface AlertsPanelProps {
   alerts: Alert[];
-  onAcknowledge: (id: string) => void;
 }
 
 const severityColor: Record<AlertSeverity, 'warning' | 'error'> = {
@@ -72,6 +71,48 @@ const STATUS_ICON: Record<AlertStatus, React.ElementType> = {
   superseded: SupersededIcon,
   expired: ExpiredIcon,
 };
+
+// Whichever "this is when it actually resolved" field applies to the
+// alert's current status — `undefined` for 'pending' (nothing to show
+// yet) and, defensively, for an older alert written before a given
+// resolution type recorded its own timestamp.
+function resolvedAt(alert: Alert): string | undefined {
+  switch (alert.status) {
+    case 'triggered':
+      return alert.triggeredAt;
+    case 'invalidated':
+      return alert.invalidatedAt;
+    case 'expired':
+      return alert.expiredAt;
+    case 'superseded':
+      return alert.supersededAt;
+    case 'pending':
+      return undefined;
+  }
+}
+
+// Capitalized verb for the resolved TimeStamp's tooltip — pending has no
+// entry since resolvedAt() never returns one for it.
+const RESOLVED_LABEL: Partial<Record<AlertStatus, string>> = {
+  triggered: 'Triggered',
+  invalidated: 'Invalidated',
+  expired: 'Expired',
+  superseded: 'Superseded',
+};
+
+// One [icon] [relative time] stamp, always with an exact-time tooltip —
+// used for both "created" and "resolved" so the two read as the same
+// kind of fact, not two different UI languages. The tooltip leads with
+// what kind of timestamp this is ("Created 4:15 PM"), not just the bare
+// time, since a card can show two of these side by side.
+const TimeStamp = ({ icon: Icon, iso, label }: { icon: React.ElementType; iso: string; label: string }) => (
+  <Tooltip title={`${label} ${formatTimestamp(iso)}`}>
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
+      <Icon sx={{ fontSize: '0.9rem' }} color="disabled" />
+      <Typography variant="caption" color="text.secondary">{formatRelativeTime(iso)}</Typography>
+    </Box>
+  </Tooltip>
+);
 
 // Same bullish/bearish/neutral read as candlestick patterns elsewhere in
 // the app, mapped onto MUI's chip palette instead of a raw hex (this chip
@@ -322,24 +363,25 @@ const AlertsLegend = () => (
   </Box>
 );
 
-export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts, onAcknowledge }) => {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts }) => {
+  // Tracks which alert BODIES are collapsed — inverted (collapsed, not
+  // open) so a newly-arrived alert defaults to open without needing to be
+  // added to this set first.
+  const [collapsedBodies, setCollapsedBodies] = useState<Set<string>>(new Set());
   const [legendOpen, setLegendOpen] = useState(false);
 
   const legend = (
     <Box>
       <Box
         onClick={() => setLegendOpen((v) => !v)}
-        sx={{ display: 'flex', alignItems: 'center', gap: 0.5, cursor: 'pointer', px: 2, py: 0.5, color: 'text.secondary' }}
+        sx={{ display: 'flex', alignItems: 'center', gap: 0.5, cursor: 'pointer', py: 0.5, color: 'text.secondary' }}
       >
         <InfoIcon fontSize="small" />
         <Typography variant="caption">what do these tags mean?</Typography>
         {legendOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
       </Box>
       <Collapse in={legendOpen}>
-        <Box sx={{ px: 2 }}>
-          <AlertsLegend />
-        </Box>
+        <AlertsLegend />
         <Divider sx={{ mb: 1 }} />
       </Collapse>
     </Box>
@@ -362,8 +404,8 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts, onAcknowledge 
     );
   }
 
-  const toggleExpanded = (id: string) => {
-    setExpanded((prev) => {
+  const toggleBody = (id: string) => {
+    setCollapsedBodies((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -372,12 +414,15 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts, onAcknowledge 
   };
 
   const renderAlert = (alert: Alert) => {
+    // Faded = no longer live: nothing here is actively notifying you
+    // anymore, whether it resolved automatically (invalidated/expired) or
+    // Claude superseded it on a later scan. A pending or freshly-triggered
+    // alert always renders at full opacity.
     const dimmed =
-      alert.acknowledged ||
       alert.status === 'superseded' ||
       alert.status === 'expired' ||
       alert.status === 'invalidated';
-    const isExpanded = expanded.has(alert.id);
+    const bodyOpen = !collapsedBodies.has(alert.id);
     // A prominent banner only once it's actually triggered and there's a
     // real action to take — a pending "watch only" alert gets a quieter
     // inline hint instead (see below), not a banner competing for
@@ -400,33 +445,22 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts, onAcknowledge 
           mb: 1,
         }}
       >
-        {!alert.acknowledged && (
-          <Tooltip title="Acknowledge">
-            <IconButton
-              size="small"
-              onClick={() => onAcknowledge(alert.id)}
-              sx={{ position: 'absolute', top: 6, right: 6 }}
-            >
-              <CheckIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        )}
-
-        {/* Tier 1: what it is, at a glance — severity + symbol lead, time trails. */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pr: alert.acknowledged ? 0 : 4 }}>
+        {/* Tier 1: what it is, at a glance — severity + symbol lead, time
+            trails: when it was created, and — once resolved one way or
+            another — when that happened too. Same icon language as the
+            status chip below, so "triggered" always means the same bolt
+            everywhere in the card. */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
           <SeverityChip severity={alert.severity} />
           <SymbolBadge symbol={alert.symbol} />
           <Box sx={{ flexGrow: 1 }} />
-          {alert.status === 'triggered' && alert.triggeredAt ? (
-            <Typography variant="caption" color="text.secondary">
-              triggered {formatTimestamp(alert.triggeredAt)}
-            </Typography>
-          ) : (
-            <Tooltip title={formatTimestamp(alert.createdAt)}>
-              <Typography variant="caption" color="text.secondary">
-                {formatRelativeTime(alert.createdAt)}
-              </Typography>
-            </Tooltip>
+          <TimeStamp icon={CreatedIcon} iso={alert.createdAt} label="Created" />
+          {resolvedAt(alert) && (
+            <TimeStamp
+              icon={STATUS_ICON[alert.status]}
+              iso={resolvedAt(alert)!}
+              label={RESOLVED_LABEL[alert.status]!}
+            />
           )}
         </Box>
 
@@ -443,6 +477,20 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts, onAcknowledge 
           <TimeframeChip timeframe={alert.condition.timeframe} />
         </Box>
 
+        {/* Expand/collapse lives below the header area (title + badges),
+            not folded into it — a plain text link, not an icon button, so
+            it doesn't compete with the chips above for attention. */}
+        <ButtonBase
+          onClick={() => toggleBody(alert.id)}
+          sx={{ display: 'flex', alignItems: 'center', gap: 0.25, mt: 0.5, color: 'info.main' }}
+        >
+          <Typography variant="caption" sx={{ fontWeight: 600 }}>
+            {bodyOpen ? 'Hide details' : 'Show details'}
+          </Typography>
+          {bodyOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+        </ButtonBase>
+
+        <Collapse in={bodyOpen}>
         {showActionBanner && (
           <Box
             sx={{
@@ -513,31 +561,25 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts, onAcknowledge 
         )}
 
         <Box
-          onClick={() => toggleExpanded(alert.id)}
-          sx={{ display: 'flex', alignItems: 'center', gap: 0.5, cursor: 'pointer', mt: 0.75 }}
+          sx={{
+            mt: 0.75,
+            px: 1,
+            py: 0.5,
+            borderRadius: 1,
+            bgcolor: 'action.selected',
+            border: '1px solid',
+            borderColor: 'divider',
+          }}
         >
-          {isExpanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
-          <Typography variant="caption" color="text.secondary">
-            technical conditions
-          </Typography>
-        </Box>
-        <Collapse in={isExpanded}>
           <Typography
             variant="caption"
             component="pre"
-            sx={{ fontFamily: 'monospace', color: 'text.secondary', m: 0, whiteSpace: 'pre-wrap' }}
+            sx={{ fontFamily: 'ui-monospace, monospace', color: 'text.secondary', m: 0, whiteSpace: 'pre-wrap' }}
           >
             {formatCondition(alert.condition)}
+            {alert.invalidation && `\ninvalidated if: ${formatCondition(alert.invalidation)}`}
           </Typography>
-          {alert.invalidation && (
-            <Typography
-              variant="caption"
-              component="pre"
-              sx={{ fontFamily: 'monospace', color: 'text.secondary', m: 0, whiteSpace: 'pre-wrap' }}
-            >
-              invalidated if: {formatCondition(alert.invalidation)}
-            </Typography>
-          )}
+        </Box>
         </Collapse>
       </Box>
     );
@@ -546,7 +588,7 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts, onAcknowledge 
   return (
     <Box>
       {legend}
-      <Box sx={{ px: 2, pt: 0.5 }}>{sorted.map(renderAlert)}</Box>
+      <Box sx={{ pt: 0.5 }}>{sorted.map(renderAlert)}</Box>
     </Box>
   );
 };

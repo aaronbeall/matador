@@ -32,10 +32,23 @@ export async function saveWatchlist(watchlist: Watchlist): Promise<void> {
   if (!res.ok) throw new Error('Failed to save watchlist');
 }
 
-export async function getStrategy(): Promise<string> {
+// A markdown file's content plus its absolute path on disk — the path is
+// what lets the UI link back to the real file, not just show its text.
+export interface MarkdownFile {
+  path: string;
+  content: string;
+}
+
+export async function getStrategy(): Promise<MarkdownFile> {
   const res = await fetch('/api/strategy');
   if (!res.ok) throw new Error('Failed to load strategy.md');
-  return res.text();
+  return res.json();
+}
+
+export async function getAgentInstructions(): Promise<MarkdownFile> {
+  const res = await fetch('/api/agent-instructions');
+  if (!res.ok) throw new Error('Failed to load CLAUDE.md');
+  return res.json();
 }
 
 export async function getTradeIdeas(): Promise<TradeIdeas> {

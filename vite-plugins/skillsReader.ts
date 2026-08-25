@@ -13,12 +13,13 @@ export interface SkillDoc {
   name: string;
   description: string;
   content: string; // the body, after frontmatter
+  path: string; // absolute path to SKILL.md, for the UI's file:// link
 }
 
-function parseSkillFile(raw: string, fallbackName: string): SkillDoc {
+function parseSkillFile(raw: string, fallbackName: string, filePath: string): SkillDoc {
   const match = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!match) {
-    return { id: fallbackName, name: fallbackName, description: '', content: raw.trim() };
+    return { id: fallbackName, name: fallbackName, description: '', content: raw.trim(), path: filePath };
   }
   const [, frontmatter, body] = match;
   const fields: Record<string, string> = {};
@@ -32,6 +33,7 @@ function parseSkillFile(raw: string, fallbackName: string): SkillDoc {
     name: fields.name || fallbackName,
     description: fields.description || '',
     content: body.trim(),
+    path: filePath,
   };
 }
 
@@ -44,7 +46,7 @@ export function getSkills(): SkillDoc[] {
       const skillFile = path.join(SKILLS_DIR, entry.name, 'SKILL.md');
       if (!fs.existsSync(skillFile)) return null;
       try {
-        return parseSkillFile(fs.readFileSync(skillFile, 'utf-8'), entry.name);
+        return parseSkillFile(fs.readFileSync(skillFile, 'utf-8'), entry.name, skillFile);
       } catch {
         return null;
       }
