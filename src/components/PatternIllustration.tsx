@@ -41,6 +41,62 @@ export const PATTERN_ILLUSTRATIONS: Record<string, CandleSpec[]> = {
   'shooting-star': [{ open: 35, close: 48, high: 8, low: 52 }],
 };
 
+// Divergence isn't a candle silhouette — it's a two-swing comparison
+// between price and an oscillator — so it needs its own schematic rather
+// than forcing it through the candle-shape renderer above. Each spec is a
+// pair of tiny line charts (price on top, RSI on bottom) with a dashed
+// connector between the two swing points on each, mirroring exactly what
+// DivergenceConnectorLayer draws on the real chart — the teaching icon and
+// the real feature use the same visual language on purpose. Coordinates
+// are hand-picked schematic points in an 80×70 viewBox, not real data.
+interface DivergencePoint { x: number; y: number }
+interface DivergenceSpec {
+  pricePath: string;
+  priceConnector: [DivergencePoint, DivergencePoint];
+  oscPath: string;
+  oscConnector: [DivergencePoint, DivergencePoint];
+  direction: 'bullish' | 'bearish';
+}
+
+export const DIVERGENCE_ILLUSTRATIONS: Record<string, DivergenceSpec> = {
+  // Price prints a higher high (swing2 above swing1); RSI's matching swing
+  // is lower — momentum disagrees with the new price high.
+  'bearish-divergence-rsi': {
+    pricePath: 'M5,26 L20,10 L35,22 L55,4 L75,18',
+    priceConnector: [{ x: 20, y: 10 }, { x: 55, y: 4 }],
+    oscPath: 'M5,64 L20,46 L35,60 L55,54 L75,62',
+    oscConnector: [{ x: 20, y: 46 }, { x: 55, y: 54 }],
+    direction: 'bearish',
+  },
+  // Price prints a lower low (swing2 below swing1); RSI's matching swing
+  // is higher — momentum disagrees with the new price low.
+  'bullish-divergence-rsi': {
+    pricePath: 'M5,4 L20,20 L35,8 L55,26 L75,12',
+    priceConnector: [{ x: 20, y: 20 }, { x: 55, y: 26 }],
+    oscPath: 'M5,42 L20,54 L35,46 L55,48 L75,44',
+    oscConnector: [{ x: 20, y: 54 }, { x: 55, y: 48 }],
+    direction: 'bullish',
+  },
+};
+
+export const DivergenceIllustration: React.FC<{ spec: DivergenceSpec }> = ({ spec }) => {
+  const color = spec.direction === 'bullish' ? CHART_COLORS.priceUp : CHART_COLORS.priceDown;
+  const lineColor = '#90a4ae'; // same neutral used for the chart's own OHLC lines — this is structure, not a directional read
+  const [from, to] = spec.priceConnector;
+  const [oscFrom, oscTo] = spec.oscConnector;
+  return (
+    <svg width={80} height={70} viewBox="0 0 80 70" style={{ display: 'block' }}>
+      <path d={spec.pricePath} fill="none" stroke={lineColor} strokeWidth={1.5} />
+      <path d={spec.oscPath} fill="none" stroke={lineColor} strokeWidth={1.5} />
+      <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={color} strokeWidth={1.5} strokeDasharray="3 2" />
+      <line x1={oscFrom.x} y1={oscFrom.y} x2={oscTo.x} y2={oscTo.y} stroke={color} strokeWidth={1.5} strokeDasharray="3 2" />
+      {[from, to, oscFrom, oscTo].map((p, i) => (
+        <circle key={i} cx={p.x} cy={p.y} r={2} fill={color} />
+      ))}
+    </svg>
+  );
+};
+
 // Small inline-SVG rendering of a pattern's candle silhouette(s) — one to
 // three bars, schematic not real data. Deliberately reuses the same
 // up/down colors as the real chart (CHART_COLORS) so it reads as "this is

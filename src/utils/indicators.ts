@@ -294,7 +294,17 @@ export const attachIndicators = (
 // duplicated magic number that could silently drift out of sync.
 export const SWING_WINDOW = 3;
 
-const findSwingHighs = (candles: Candlestick[]): number[] => {
+// Exported for the client-side Signals feature (swing-high/swing-low
+// markers, App.tsx) — unlike divergence, a swing pivot only needs a
+// candle's own high/low, always present regardless of which indicators are
+// toggled on, so recomputing it purely client-side over whatever window is
+// currently on screen is safe (no server-only data dependency the way RSI
+// divergence has). That does mean a swing right at the edge of the visible
+// window can flicker in/out as the user pans/zooms, since the ±SWING_WINDOW
+// neighbors it needs might fall outside the current filteredCandles slice —
+// the same window-relative limitation the EMA/MACD cross markers already
+// accept for the same reason.
+export const findSwingHighs = (candles: Candlestick[]): number[] => {
   const idxs: number[] = [];
   for (let i = SWING_WINDOW; i < candles.length - SWING_WINDOW; i++) {
     const window = candles.slice(i - SWING_WINDOW, i + SWING_WINDOW + 1);
@@ -303,7 +313,7 @@ const findSwingHighs = (candles: Candlestick[]): number[] => {
   return idxs;
 };
 
-const findSwingLows = (candles: Candlestick[]): number[] => {
+export const findSwingLows = (candles: Candlestick[]): number[] => {
   const idxs: number[] = [];
   for (let i = SWING_WINDOW; i < candles.length - SWING_WINDOW; i++) {
     const window = candles.slice(i - SWING_WINDOW, i + SWING_WINDOW + 1);

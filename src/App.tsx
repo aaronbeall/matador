@@ -67,7 +67,8 @@ import {
 import { Logo } from './components/Logo';
 import { MarketHoursIndicator } from './components/MarketHoursIndicator';
 import { SymbolBadge } from './components/SymbolBadge';
-import { Indicator, ALL_INDICATORS } from './utils/indicators';
+import { Indicator, ALL_INDICATORS, findSwingHighs, findSwingLows } from './utils/indicators';
+import { DIRECTION_COLOR } from './constants/direction';
 import { CandlestickBar } from './components/CandlestickBar';
 import { OhlcvLegend } from './components/OhlcvLegend';
 import { IndicatorLegend, IndicatorLegendItem } from './components/IndicatorLegend';
@@ -75,7 +76,7 @@ import { PatternMarkerShape, PatternMarkerPoint } from './components/PatternMark
 import { PatternBadges } from './components/PatternBadges';
 import { PatternTooltip } from './components/PatternTooltip';
 import { getPatternColor } from './components/PatternVisuals';
-import { PatternIllustration, PATTERN_ILLUSTRATIONS } from './components/PatternIllustration';
+import { PatternIllustration, PATTERN_ILLUSTRATIONS, DivergenceIllustration, DIVERGENCE_ILLUSTRATIONS } from './components/PatternIllustration';
 import { CrossMarkerShape, CrossMarkerPoint } from './components/CrossMarker';
 import { DivergenceConnectorLayer, DivergenceConnectorPair } from './components/DivergenceConnector';
 import { CrossTooltip } from './components/CrossTooltip';
@@ -188,6 +189,8 @@ const OHLC_LINE_COLOR = '#90a4ae';
 const SIGNAL_SWATCH: Record<SignalKey, string> = {
   'ema-cross': CHART_COLORS.ema9,
   'macd-cross': CHART_COLORS.macd,
+  'swing-high': DIRECTION_COLOR.bearish,
+  'swing-low': DIRECTION_COLOR.bullish,
 };
 
 // 'today' isn't a fixed trailing duration (see getTodayWindow below) — 24h
@@ -1332,6 +1335,33 @@ const AppContent = () => {
     return { timestamp: curr.timestamp, value: null, direction: 'neutral' };
   });
 
+  // Market-structure pivots — every confirmed swing high/low in the
+  // visible window (see findSwingHighs/findSwingLows), not just the subset
+  // that happen to form a divergence. A swing high is positioned at
+  // direction 'bearish' (the top of a move — same convention patternMarkers
+  // already uses for a bearish read) and a swing low at 'bullish', purely
+  // for marker color/shape; it's not a directional call on what happens
+  // next. Recomputed over filteredCandles itself rather than pulling from
+  // server-side data (findSwingHighs/Lows only need high/low, always
+  // present) — see the export comment on those functions for the resulting
+  // window-edge caveat.
+  const swingHighIndices = useMemo(() => new Set(findSwingHighs(filteredCandles)), [filteredCandles]);
+  const swingLowIndices = useMemo(() => new Set(findSwingLows(filteredCandles)), [filteredCandles]);
+
+  const swingHighMarkers: CrossMarkerPoint[] = filteredCandles.map((c, i) => {
+    if (!visibleSignals.includes('swing-high') || !swingHighIndices.has(i)) {
+      return { timestamp: c.timestamp, value: null, direction: 'neutral' };
+    }
+    return { timestamp: c.timestamp, value: c.high, direction: 'bearish', signal: 'swing-high' };
+  });
+
+  const swingLowMarkers: CrossMarkerPoint[] = filteredCandles.map((c, i) => {
+    if (!visibleSignals.includes('swing-low') || !swingLowIndices.has(i)) {
+      return { timestamp: c.timestamp, value: null, direction: 'neutral' };
+    }
+    return { timestamp: c.timestamp, value: c.low, direction: 'bullish', signal: 'swing-low' };
+  });
+
   // Whether each full-length marker array actually has anything to show —
   // gates whether its Scatter renders at all. An all-null Scatter (every
   // signal/pattern off) broke the rest of its own chart panel entirely
@@ -1343,6 +1373,8 @@ const AppContent = () => {
   const hasPatternMarkers = patternMarkers.some((m) => m.price != null);
   const hasEmaCrossMarkers = emaCrossMarkers.some((m) => m.value != null);
   const hasMacdCrossMarkers = macdCrossMarkers.some((m) => m.value != null);
+  const hasSwingHighMarkers = swingHighMarkers.some((m) => m.value != null);
+  const hasSwingLowMarkers = swingLowMarkers.some((m) => m.value != null);
 
   // Auto-computed reference levels (prior day H/L/C, premarket H/L,
   // opening range) — only meaningful zoomed into intraday granularity,
@@ -1769,7 +1801,7 @@ const AppContent = () => {
                   arrow
                   title={
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5, maxWidth: 240 }}>
-                      {PATTERN_ILLUSTRATIONS[key] && (
+                      {(PATTERN_ILLUSTRATIONS[key] || DIVERGENCE_ILLUSTRATIONS[key]) && (
                         <Box
                           sx={{
                             display: 'inline-flex',
@@ -1781,7 +1813,11 @@ const AppContent = () => {
                             py: 0.75,
                           }}
                         >
-                          <PatternIllustration candles={PATTERN_ILLUSTRATIONS[key]} />
+                          {DIVERGENCE_ILLUSTRATIONS[key] ? (
+                            <DivergenceIllustration spec={DIVERGENCE_ILLUSTRATIONS[key]} />
+                          ) : (
+                            <PatternIllustration candles={PATTERN_ILLUSTRATIONS[key]} />
+                          )}
                         </Box>
                       )}
                       <Typography variant="caption" sx={{ fontWeight: 700 }}>{info.label}</Typography>
@@ -2201,6 +2237,28 @@ const AppContent = () => {
                 {hasEmaCrossMarkers && (
                   <Scatter
                     data={emaCrossMarkers}
+                    dataKey="value"
+                    shape={(props: any) => (
+                      <CrossMarkerShape {...props} onHover={handleCrossMarkerHover} onLeave={handleCrossMarkerLeave} />
+                    )}
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
+                )}
+                {hasSwingHighMarkers && (
+                  <Scatter
+                    data={swingHighMarkers}
+                    dataKey="value"
+                    shape={(props: any) => (
+                      <CrossMarkerShape {...props} onHover={handleCrossMarkerHover} onLeave={handleCrossMarkerLeave} />
+                    )}
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
+                )}
+                {hasSwingLowMarkers && (
+                  <Scatter
+                    data={swingLowMarkers}
                     dataKey="value"
                     shape={(props: any) => (
                       <CrossMarkerShape {...props} onHover={handleCrossMarkerHover} onLeave={handleCrossMarkerLeave} />
