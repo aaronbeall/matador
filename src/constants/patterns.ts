@@ -89,4 +89,18 @@ export const PATTERN_INFO: Record<string, PatternInfo> = {
     description: "Price prints a higher swing high while RSI's matching swing is lower — momentum disagrees with the new price high.",
     why: 'A classic exhaustion signal on an advance — the buyers pushing price to a new high are doing it with less underlying force than last time, often ahead of a stall or reversal.',
   },
+  'bullish-divergence-macd': {
+    label: 'Bullish MACD Divergence',
+    direction: 'bullish',
+    strength: 'strong',
+    description: "Price prints a lower swing low while the MACD histogram's matching swing is higher — same read as RSI divergence, off a different momentum measure.",
+    why: "MACD's histogram reacts to moving-average convergence rather than RSI's overbought/oversold read, so it can catch or confirm an exhaustion RSI misses — most weight when both agree on the same swing.",
+  },
+  'bearish-divergence-macd': {
+    label: 'Bearish MACD Divergence',
+    direction: 'bearish',
+    strength: 'strong',
+    description: "Price prints a higher swing high while the MACD histogram's matching swing is lower — same read as RSI divergence, off a different momentum measure.",
+    why: "MACD's histogram reacts to moving-average convergence rather than RSI's overbought/oversold read, so it can catch or confirm an exhaustion RSI misses — most weight when both agree on the same swing.",
+  },
 };

@@ -322,46 +322,37 @@ export const findSwingLows = (candles: Candlestick[]): number[] => {
   return idxs;
 };
 
-// Regular RSI divergence, v1 scope (per the approved signals plan): price
-// and RSI disagreeing at consecutive confirmed swings — price makes a
-// higher high while RSI's matching swing is lower (bearish), or price makes
-// a lower low while RSI's matching swing is higher (bullish). Reuses the
-// existing pattern pipeline wholesale rather than being its own overlay:
-// tags the confirming candle's `patterns` array with
-// 'bullish-divergence-rsi'/'bearish-divergence-rsi' (see PATTERN_INFO),
-// which is what lets the Scatter/tooltip/badges/settings-checkbox/
-// find-trades-table machinery already built for candlestick patterns pick
-// these up for free. Must run after RSI (attachIndicators) and after
-// attachCandlePatterns, since it appends onto whatever `patterns` already
-// tagged rather than replacing it.
-//
-// Also records which earlier swing each tag is being compared against
-// (bullishDivergencePartner/bearishDivergencePartner, the partner candle's
-// timestamp) — not needed for the tag/tooltip pipeline itself, but is what
-// lets the chart draw an actual connector line between the two swing
-// points instead of just marking the later one. Computed once here rather
-// than re-derived client-side, same "server computes once, browser only
-// renders" principle as everything else in this file.
-export const attachDivergence = (candles: Candlestick[]): Candlestick[] => {
-  if (candles.length < SWING_WINDOW * 2 + 2) return candles;
+// Regular divergence, checked against two oscillators (v1 scope per the
+// approved signals plan: regular divergence only, not hidden): price and
+// the oscillator disagreeing at consecutive confirmed swings — price makes
+// a higher high while the oscillator's matching swing is lower (bearish),
+// or price makes a lower low while the oscillator's matching swing is
+// higher (bullish). The swing pairing itself only depends on price
+// (findSwingHighs/findSwingLows), so it's identical regardless of which
+// oscillator is being checked — this just re-runs the same comparison
+// against a different field and tag suffix, rather than duplicating the
+// swing-pairing logic per oscillator.
+type DivergenceOscillator = 'rsi' | 'histogram';
 
-  const tags = new Map<number, string[]>();
-  const bullishPartner = new Map<number, number>();
-  const bearishPartner = new Map<number, number>();
-  const addTag = (index: number, tag: string) => {
-    tags.set(index, [...(tags.get(index) ?? []), tag]);
-  };
+interface DivergenceHit {
+  index: number;
+  tag: string;
+  direction: 'bullish' | 'bearish';
+  partnerTimestamp: number;
+}
+
+function detectDivergence(candles: Candlestick[], oscillator: DivergenceOscillator, tagSuffix: string): DivergenceHit[] {
+  const hits: DivergenceHit[] = [];
 
   const swingHighs = findSwingHighs(candles);
   for (let k = 1; k < swingHighs.length; k++) {
     const i = swingHighs[k - 1];
     const j = swingHighs[k];
-    const rsiI = candles[i].rsi;
-    const rsiJ = candles[j].rsi;
-    if (rsiI == null || rsiJ == null) continue;
-    if (candles[j].high > candles[i].high && rsiJ < rsiI) {
-      addTag(j, 'bearish-divergence-rsi');
-      bearishPartner.set(j, candles[i].timestamp);
+    const oscI = candles[i][oscillator];
+    const oscJ = candles[j][oscillator];
+    if (oscI == null || oscJ == null) continue;
+    if (candles[j].high > candles[i].high && oscJ < oscI) {
+      hits.push({ index: j, tag: `bearish-divergence-${tagSuffix}`, direction: 'bearish', partnerTimestamp: candles[i].timestamp });
     }
   }
 
@@ -369,16 +360,55 @@ export const attachDivergence = (candles: Candlestick[]): Candlestick[] => {
   for (let k = 1; k < swingLows.length; k++) {
     const i = swingLows[k - 1];
     const j = swingLows[k];
-    const rsiI = candles[i].rsi;
-    const rsiJ = candles[j].rsi;
-    if (rsiI == null || rsiJ == null) continue;
-    if (candles[j].low < candles[i].low && rsiJ > rsiI) {
-      addTag(j, 'bullish-divergence-rsi');
-      bullishPartner.set(j, candles[i].timestamp);
+    const oscI = candles[i][oscillator];
+    const oscJ = candles[j][oscillator];
+    if (oscI == null || oscJ == null) continue;
+    if (candles[j].low < candles[i].low && oscJ > oscI) {
+      hits.push({ index: j, tag: `bullish-divergence-${tagSuffix}`, direction: 'bullish', partnerTimestamp: candles[i].timestamp });
     }
   }
 
-  if (tags.size === 0) return candles;
+  return hits;
+}
+
+// Reuses the existing pattern pipeline wholesale rather than being its own
+// overlay: tags the confirming candle's `patterns` array with
+// 'bullish-divergence-rsi'/'bearish-divergence-rsi'/'-macd' (see
+// PATTERN_INFO), which is what lets the Scatter/tooltip/badges/
+// settings-checkbox/find-trades-table machinery already built for
+// candlestick patterns pick these up for free. Must run after
+// RSI+MACD (attachIndicators) and after attachCandlePatterns, since it
+// appends onto whatever `patterns` already tagged rather than replacing it.
+//
+// Also records which earlier swing each tag is being compared against
+// (bullishDivergencePartner/bearishDivergencePartner, the partner candle's
+// timestamp) — not needed for the tag/tooltip pipeline itself, but is what
+// lets the chart draw an actual connector line between the two swing
+// points instead of just marking the later one. RSI and MACD divergence at
+// the same candle share this same field rather than needing their own:
+// the partner is purely a function of price's own swing sequence
+// (findSwingHighs/Lows), identical regardless of which oscillator
+// triggered the tag, so there's never a value to disambiguate between.
+// Computed once here rather than re-derived client-side, same "server
+// computes once, browser only renders" principle as everything else in
+// this file.
+export const attachDivergence = (candles: Candlestick[]): Candlestick[] => {
+  if (candles.length < SWING_WINDOW * 2 + 2) return candles;
+
+  const hits = [
+    ...detectDivergence(candles, 'rsi', 'rsi'),
+    ...detectDivergence(candles, 'histogram', 'macd'),
+  ];
+  if (hits.length === 0) return candles;
+
+  const tags = new Map<number, string[]>();
+  const bullishPartner = new Map<number, number>();
+  const bearishPartner = new Map<number, number>();
+  for (const hit of hits) {
+    tags.set(hit.index, [...(tags.get(hit.index) ?? []), hit.tag]);
+    (hit.direction === 'bullish' ? bullishPartner : bearishPartner).set(hit.index, hit.partnerTimestamp);
+  }
+
   return candles.map((c, i) => {
     const extra = tags.get(i);
     if (!extra) return c;

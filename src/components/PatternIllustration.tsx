@@ -58,9 +58,15 @@ interface DivergenceSpec {
   direction: 'bullish' | 'bearish';
 }
 
+// Same schematic shape for both oscillators — the underlying comparison
+// (price's new extreme vs. an oscillator's disagreeing swing) is identical
+// regardless of whether the oscillator is RSI or the MACD histogram; only
+// which real chart panel it maps to differs (see the RSI/MACD-panel
+// connector rendering in App.tsx), which isn't something this icon needs
+// to distinguish.
 export const DIVERGENCE_ILLUSTRATIONS: Record<string, DivergenceSpec> = {
-  // Price prints a higher high (swing2 above swing1); RSI's matching swing
-  // is lower — momentum disagrees with the new price high.
+  // Price prints a higher high (swing2 above swing1); the oscillator's
+  // matching swing is lower — momentum disagrees with the new price high.
   'bearish-divergence-rsi': {
     pricePath: 'M5,26 L20,10 L35,22 L55,4 L75,18',
     priceConnector: [{ x: 20, y: 10 }, { x: 55, y: 4 }],
@@ -68,8 +74,8 @@ export const DIVERGENCE_ILLUSTRATIONS: Record<string, DivergenceSpec> = {
     oscConnector: [{ x: 20, y: 46 }, { x: 55, y: 54 }],
     direction: 'bearish',
   },
-  // Price prints a lower low (swing2 below swing1); RSI's matching swing
-  // is higher — momentum disagrees with the new price low.
+  // Price prints a lower low (swing2 below swing1); the oscillator's
+  // matching swing is higher — momentum disagrees with the new price low.
   'bullish-divergence-rsi': {
     pricePath: 'M5,4 L20,20 L35,8 L55,26 L75,12',
     priceConnector: [{ x: 20, y: 20 }, { x: 55, y: 26 }],
@@ -78,6 +84,8 @@ export const DIVERGENCE_ILLUSTRATIONS: Record<string, DivergenceSpec> = {
     direction: 'bullish',
   },
 };
+DIVERGENCE_ILLUSTRATIONS['bearish-divergence-macd'] = DIVERGENCE_ILLUSTRATIONS['bearish-divergence-rsi'];
+DIVERGENCE_ILLUSTRATIONS['bullish-divergence-macd'] = DIVERGENCE_ILLUSTRATIONS['bullish-divergence-rsi'];
 
 export const DivergenceIllustration: React.FC<{ spec: DivergenceSpec }> = ({ spec }) => {
   const color = spec.direction === 'bullish' ? CHART_COLORS.priceUp : CHART_COLORS.priceDown;

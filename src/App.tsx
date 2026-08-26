@@ -155,6 +155,10 @@ const SIGNALS_STORAGE_KEY = 'matador-signals';
 const INDICATORS_VISIBLE_STORAGE_KEY = 'matador-indicators-visible';
 const PATTERNS_VISIBLE_STORAGE_KEY = 'matador-patterns-visible';
 const SIGNALS_VISIBLE_STORAGE_KEY = 'matador-signals-visible';
+// MACD divergence ships off by default (requested explicitly) — everything
+// else in PATTERN_INFO defaults to on. Only affects a fresh install with no
+// stored selection yet; an existing user's stored array is untouched.
+const DEFAULT_DISABLED_PATTERNS = new Set(['bullish-divergence-macd', 'bearish-divergence-macd']);
 
 // Remaining UI-state persistence keys — same read-once-with-validation,
 // write-on-change pattern as sidebarWidth/indicators/enabledPatterns
@@ -370,11 +374,12 @@ const AppContent = () => {
   }, [indicators]);
 
   const [enabledPatterns, setEnabledPatterns] = useState<string[]>(() => {
+    const defaultEnabled = Object.keys(PATTERN_INFO).filter((p) => !DEFAULT_DISABLED_PATTERNS.has(p));
     try {
       const stored = JSON.parse(localStorage.getItem(PATTERNS_STORAGE_KEY) ?? 'null');
-      return Array.isArray(stored) ? stored.filter((p): p is string => p in PATTERN_INFO) : Object.keys(PATTERN_INFO);
+      return Array.isArray(stored) ? stored.filter((p): p is string => p in PATTERN_INFO) : defaultEnabled;
     } catch {
-      return Object.keys(PATTERN_INFO);
+      return defaultEnabled;
     }
   });
   useEffect(() => {
@@ -1383,44 +1388,73 @@ const AppContent = () => {
 
   // Connector lines between each divergence tag's two swing points — one
   // pair per panel, since price's swing lives on the main chart's scale
-  // and RSI's matching swing lives on the RSI panel's own scale (see
+  // while RSI's/MACD's matching swing lives on that panel's own scale (see
   // DivergenceConnectorLayer). Built from the partner timestamp
   // attachDivergence recorded server-side (src/utils/indicators.ts), not
   // re-derived here — only pairs whose partner candle is also in the
   // currently visible window get drawn (an off-screen partner has nowhere
-  // to place its end of the line). Gated by visiblePatterns so muting the
-  // divergence pattern also hides its connector, same as every other
-  // pattern-driven overlay on this chart.
-  const { divergencePairs, rsiDivergencePairs } = useMemo(() => {
+  // to place its end of the line). Each oscillator's pair is gated by its
+  // own visiblePatterns entry so muting either divergence pattern hides
+  // just its own connector, same as every other pattern-driven overlay on
+  // this chart. RSI and MACD divergence at the same candle share the same
+  // partner field (see attachDivergence's comment) and can both want a
+  // price-panel line for the identical two points — pricePairIds dedupes
+  // that rather than drawing the same segment twice.
+  const { divergencePairs, rsiDivergencePairs, macdDivergencePairs } = useMemo(() => {
     const price: DivergenceConnectorPair[] = [];
     const rsi: DivergenceConnectorPair[] = [];
-    const showBearish = visiblePatterns.includes('bearish-divergence-rsi');
-    const showBullish = visiblePatterns.includes('bullish-divergence-rsi');
-    if (!showBearish && !showBullish) return { divergencePairs: price, rsiDivergencePairs: rsi };
+    const macd: DivergenceConnectorPair[] = [];
+    const showRsiBearish = visiblePatterns.includes('bearish-divergence-rsi');
+    const showRsiBullish = visiblePatterns.includes('bullish-divergence-rsi');
+    const showMacdBearish = visiblePatterns.includes('bearish-divergence-macd');
+    const showMacdBullish = visiblePatterns.includes('bullish-divergence-macd');
+    if (!showRsiBearish && !showRsiBullish && !showMacdBearish && !showMacdBullish) {
+      return { divergencePairs: price, rsiDivergencePairs: rsi, macdDivergencePairs: macd };
+    }
     const byTimestamp = new Map(filteredCandles.map((c) => [c.timestamp, c]));
+    const pricePairIds = new Set<string>();
+    const addPricePair = (direction: 'bullish' | 'bearish', partner: Candlestick, c: Candlestick) => {
+      const id = `${direction}-${partner.timestamp}-${c.timestamp}`;
+      if (pricePairIds.has(id)) return;
+      pricePairIds.add(id);
+      const key = direction === 'bearish' ? 'high' : 'low';
+      price.push({ id, fromTimestamp: partner.timestamp, fromValue: partner[key], toTimestamp: c.timestamp, toValue: c[key], direction });
+    };
+
     filteredCandles.forEach((c) => {
-      if (showBearish && c.bearishDivergencePartner != null) {
+      const patterns = c.patterns ?? [];
+
+      if (c.bearishDivergencePartner != null) {
         const partner = byTimestamp.get(c.bearishDivergencePartner);
         if (partner) {
-          const id = `bearish-${partner.timestamp}-${c.timestamp}`;
-          price.push({ id, fromTimestamp: partner.timestamp, fromValue: partner.high, toTimestamp: c.timestamp, toValue: c.high, direction: 'bearish' });
-          if (partner.rsi != null && c.rsi != null) {
-            rsi.push({ id, fromTimestamp: partner.timestamp, fromValue: partner.rsi, toTimestamp: c.timestamp, toValue: c.rsi, direction: 'bearish' });
+          const hasRsi = showRsiBearish && patterns.includes('bearish-divergence-rsi');
+          const hasMacd = showMacdBearish && patterns.includes('bearish-divergence-macd');
+          if (hasRsi || hasMacd) addPricePair('bearish', partner, c);
+          if (hasRsi && partner.rsi != null && c.rsi != null) {
+            rsi.push({ id: `rsi-bearish-${partner.timestamp}-${c.timestamp}`, fromTimestamp: partner.timestamp, fromValue: partner.rsi, toTimestamp: c.timestamp, toValue: c.rsi, direction: 'bearish' });
+          }
+          if (hasMacd && partner.histogram != null && c.histogram != null) {
+            macd.push({ id: `macd-bearish-${partner.timestamp}-${c.timestamp}`, fromTimestamp: partner.timestamp, fromValue: partner.histogram, toTimestamp: c.timestamp, toValue: c.histogram, direction: 'bearish' });
           }
         }
       }
-      if (showBullish && c.bullishDivergencePartner != null) {
+
+      if (c.bullishDivergencePartner != null) {
         const partner = byTimestamp.get(c.bullishDivergencePartner);
         if (partner) {
-          const id = `bullish-${partner.timestamp}-${c.timestamp}`;
-          price.push({ id, fromTimestamp: partner.timestamp, fromValue: partner.low, toTimestamp: c.timestamp, toValue: c.low, direction: 'bullish' });
-          if (partner.rsi != null && c.rsi != null) {
-            rsi.push({ id, fromTimestamp: partner.timestamp, fromValue: partner.rsi, toTimestamp: c.timestamp, toValue: c.rsi, direction: 'bullish' });
+          const hasRsi = showRsiBullish && patterns.includes('bullish-divergence-rsi');
+          const hasMacd = showMacdBullish && patterns.includes('bullish-divergence-macd');
+          if (hasRsi || hasMacd) addPricePair('bullish', partner, c);
+          if (hasRsi && partner.rsi != null && c.rsi != null) {
+            rsi.push({ id: `rsi-bullish-${partner.timestamp}-${c.timestamp}`, fromTimestamp: partner.timestamp, fromValue: partner.rsi, toTimestamp: c.timestamp, toValue: c.rsi, direction: 'bullish' });
+          }
+          if (hasMacd && partner.histogram != null && c.histogram != null) {
+            macd.push({ id: `macd-bullish-${partner.timestamp}-${c.timestamp}`, fromTimestamp: partner.timestamp, fromValue: partner.histogram, toTimestamp: c.timestamp, toValue: c.histogram, direction: 'bullish' });
           }
         }
       }
     });
-    return { divergencePairs: price, rsiDivergencePairs: rsi };
+    return { divergencePairs: price, rsiDivergencePairs: rsi, macdDivergencePairs: macd };
   }, [filteredCandles, visiblePatterns]);
 
   return (
@@ -2300,6 +2334,9 @@ const AppContent = () => {
                   onMouseMove={handleChartMouseMove}
                   onMouseLeave={handleChartMouseLeave}
                 >
+                  {macdDivergencePairs.length > 0 && (
+                    <Customized component={(chartProps: any) => <DivergenceConnectorLayer {...chartProps} pairs={macdDivergencePairs} />} />
+                  )}
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.2)" />
                   <XAxis
                     dataKey="timestamp"
