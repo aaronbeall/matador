@@ -321,10 +321,20 @@ const findSwingLows = (candles: Candlestick[]): number[] => {
 // these up for free. Must run after RSI (attachIndicators) and after
 // attachCandlePatterns, since it appends onto whatever `patterns` already
 // tagged rather than replacing it.
+//
+// Also records which earlier swing each tag is being compared against
+// (bullishDivergencePartner/bearishDivergencePartner, the partner candle's
+// timestamp) — not needed for the tag/tooltip pipeline itself, but is what
+// lets the chart draw an actual connector line between the two swing
+// points instead of just marking the later one. Computed once here rather
+// than re-derived client-side, same "server computes once, browser only
+// renders" principle as everything else in this file.
 export const attachDivergence = (candles: Candlestick[]): Candlestick[] => {
   if (candles.length < SWING_WINDOW * 2 + 2) return candles;
 
   const tags = new Map<number, string[]>();
+  const bullishPartner = new Map<number, number>();
+  const bearishPartner = new Map<number, number>();
   const addTag = (index: number, tag: string) => {
     tags.set(index, [...(tags.get(index) ?? []), tag]);
   };
@@ -338,6 +348,7 @@ export const attachDivergence = (candles: Candlestick[]): Candlestick[] => {
     if (rsiI == null || rsiJ == null) continue;
     if (candles[j].high > candles[i].high && rsiJ < rsiI) {
       addTag(j, 'bearish-divergence-rsi');
+      bearishPartner.set(j, candles[i].timestamp);
     }
   }
 
@@ -350,12 +361,19 @@ export const attachDivergence = (candles: Candlestick[]): Candlestick[] => {
     if (rsiI == null || rsiJ == null) continue;
     if (candles[j].low < candles[i].low && rsiJ > rsiI) {
       addTag(j, 'bullish-divergence-rsi');
+      bullishPartner.set(j, candles[i].timestamp);
     }
   }
 
   if (tags.size === 0) return candles;
   return candles.map((c, i) => {
     const extra = tags.get(i);
-    return extra ? { ...c, patterns: [...(c.patterns ?? []), ...extra] } : c;
+    if (!extra) return c;
+    return {
+      ...c,
+      patterns: [...(c.patterns ?? []), ...extra],
+      ...(bullishPartner.has(i) ? { bullishDivergencePartner: bullishPartner.get(i) } : {}),
+      ...(bearishPartner.has(i) ? { bearishDivergencePartner: bearishPartner.get(i) } : {}),
+    };
   });
 };

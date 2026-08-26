@@ -77,6 +77,7 @@ import { PatternTooltip } from './components/PatternTooltip';
 import { getPatternColor } from './components/PatternVisuals';
 import { PatternIllustration, PATTERN_ILLUSTRATIONS } from './components/PatternIllustration';
 import { CrossMarkerShape, CrossMarkerPoint } from './components/CrossMarker';
+import { DivergenceConnectorLayer, DivergenceConnectorPair } from './components/DivergenceConnector';
 import { CrossTooltip } from './components/CrossTooltip';
 import { computeAutoLevels } from './utils/autoLevels';
 import { CHART_COLORS } from './constants/colors';
@@ -1348,6 +1349,48 @@ const AppContent = () => {
   // not on the 1d/1w interval where "yesterday" is just the adjacent bar.
   const autoLevels = timeInterval === '1d' || timeInterval === '1w' ? [] : computeAutoLevels(candles);
 
+  // Connector lines between each divergence tag's two swing points — one
+  // pair per panel, since price's swing lives on the main chart's scale
+  // and RSI's matching swing lives on the RSI panel's own scale (see
+  // DivergenceConnectorLayer). Built from the partner timestamp
+  // attachDivergence recorded server-side (src/utils/indicators.ts), not
+  // re-derived here — only pairs whose partner candle is also in the
+  // currently visible window get drawn (an off-screen partner has nowhere
+  // to place its end of the line). Gated by visiblePatterns so muting the
+  // divergence pattern also hides its connector, same as every other
+  // pattern-driven overlay on this chart.
+  const { divergencePairs, rsiDivergencePairs } = useMemo(() => {
+    const price: DivergenceConnectorPair[] = [];
+    const rsi: DivergenceConnectorPair[] = [];
+    const showBearish = visiblePatterns.includes('bearish-divergence-rsi');
+    const showBullish = visiblePatterns.includes('bullish-divergence-rsi');
+    if (!showBearish && !showBullish) return { divergencePairs: price, rsiDivergencePairs: rsi };
+    const byTimestamp = new Map(filteredCandles.map((c) => [c.timestamp, c]));
+    filteredCandles.forEach((c) => {
+      if (showBearish && c.bearishDivergencePartner != null) {
+        const partner = byTimestamp.get(c.bearishDivergencePartner);
+        if (partner) {
+          const id = `bearish-${partner.timestamp}-${c.timestamp}`;
+          price.push({ id, fromTimestamp: partner.timestamp, fromValue: partner.high, toTimestamp: c.timestamp, toValue: c.high, direction: 'bearish' });
+          if (partner.rsi != null && c.rsi != null) {
+            rsi.push({ id, fromTimestamp: partner.timestamp, fromValue: partner.rsi, toTimestamp: c.timestamp, toValue: c.rsi, direction: 'bearish' });
+          }
+        }
+      }
+      if (showBullish && c.bullishDivergencePartner != null) {
+        const partner = byTimestamp.get(c.bullishDivergencePartner);
+        if (partner) {
+          const id = `bullish-${partner.timestamp}-${c.timestamp}`;
+          price.push({ id, fromTimestamp: partner.timestamp, fromValue: partner.low, toTimestamp: c.timestamp, toValue: c.low, direction: 'bullish' });
+          if (partner.rsi != null && c.rsi != null) {
+            rsi.push({ id, fromTimestamp: partner.timestamp, fromValue: partner.rsi, toTimestamp: c.timestamp, toValue: c.rsi, direction: 'bullish' });
+          }
+        }
+      }
+    });
+    return { divergencePairs: price, rsiDivergencePairs: rsi };
+  }, [filteredCandles, visiblePatterns]);
+
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppBar
@@ -1823,6 +1866,9 @@ const AppContent = () => {
                     return null;
                   }}
                 />
+                {divergencePairs.length > 0 && (
+                  <Customized component={(chartProps: any) => <DivergenceConnectorLayer {...chartProps} pairs={divergencePairs} />} />
+                )}
                 <CartesianGrid
                   strokeDasharray="3 3"
                   stroke="rgba(128, 128, 128, 0.2)"
@@ -2264,6 +2310,9 @@ const AppContent = () => {
                   onMouseMove={handleChartMouseMove}
                   onMouseLeave={handleChartMouseLeave}
                 >
+                  {rsiDivergencePairs.length > 0 && (
+                    <Customized component={(chartProps: any) => <DivergenceConnectorLayer {...chartProps} pairs={rsiDivergencePairs} />} />
+                  )}
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.2)" />
                   <XAxis
                     dataKey="timestamp"

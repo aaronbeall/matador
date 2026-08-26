@@ -38,6 +38,12 @@ export type Candlestick = {
   bollingerMiddle?: number;
   bollingerUpper?: number;
   bollingerLower?: number;
+  // Timestamp of the earlier swing this candle's divergence tag (in
+  // `patterns`, see attachDivergence in utils/indicators.ts) is being
+  // compared against — lets the chart draw a connector line between the
+  // two swing points instead of just marking the later one.
+  bullishDivergencePartner?: number;
+  bearishDivergencePartner?: number;
 } & {
   [K in Indicator]?: number;
 }
