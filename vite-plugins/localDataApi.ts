@@ -45,13 +45,19 @@ const JSON_COLLECTIONS: Record<string, string> = {
   'portfolio-positions': 'portfolio-positions.json',
   'portfolio-balances': 'portfolio-balances.json',
   connections: 'connections.json',
+  // Not an array like the rest of these — a single object keyed by panel
+  // name (see src/types/AgentActivity.ts) — but the generic GET-whole/
+  // POST-replaces-whole handler below doesn't care about that shape
+  // distinction, so it fits the same route machinery.
+  'agent-activity': 'agent-activity.json',
 };
 
 function ensureDataFiles() {
   fs.mkdirSync(CANDLES_DIR, { recursive: true });
-  for (const filename of Object.values(JSON_COLLECTIONS)) {
+  for (const [route, filename] of Object.entries(JSON_COLLECTIONS)) {
     const filePath = path.join(DATA_DIR, filename);
-    if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, '[]\n');
+    const emptyShape = route === 'agent-activity' ? '{}\n' : '[]\n';
+    if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, emptyShape);
   }
 }
 

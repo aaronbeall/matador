@@ -114,6 +114,7 @@ import { Skill } from './types/Skill';
 import { JournalEntry } from './types/Journal';
 import { Position, AccountBalance } from './types/Portfolio';
 import { Connection } from './types/Connection';
+import { AgentActivity } from './types/AgentActivity';
 import {
   getWatchlist,
   saveWatchlist,
@@ -131,9 +132,11 @@ import {
   getAccountBalances,
   getConnections,
   getAgentInstructions,
+  getAgentActivity,
   rebuildMarketData,
   subscribeToDataEvents,
 } from './services/dataApi';
+import { LastEvaluatedIndicator } from './components/Sidebar/LastEvaluatedIndicator';
 
 type TimeFrame = 'today' | '15m' | '1h' | '3h' | '6h' | '1d' | '1w';
 // 'price' — just the close line, the plain "line chart" read. 'ohlc' — all
@@ -633,6 +636,7 @@ const AppContent = () => {
   const [alerts, setAlerts] = useState<AlertType[]>([]);
   const [analysisLog, setAnalysisLog] = useState<AnalysisLogEntry[]>([]);
   const [journal, setJournal] = useState<JournalEntry[]>([]);
+  const [agentActivity, setAgentActivity] = useState<AgentActivity>({});
   const [portfolioPositions, setPortfolioPositions] = useState<Position[]>([]);
   const [accountBalances, setAccountBalances] = useState<AccountBalance[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -853,6 +857,9 @@ const AppContent = () => {
     }
     if (!only || only === 'journal') {
       tasks.push(getJournal().then(setJournal).catch(() => {}));
+    }
+    if (!only || only === 'agent-activity') {
+      tasks.push(getAgentActivity().then(setAgentActivity).catch(() => {}));
     }
     if (!only || only === 'portfolio-positions') {
       tasks.push(getPortfolioPositions().then(setPortfolioPositions).catch(() => {}));
@@ -2539,6 +2546,7 @@ const AppContent = () => {
                     analysis or a prediction, no skill needed. Distinct from Ideas (a concrete trade
                     proposal) and Alerts (a one-shot trigger) — this is the running "why" behind them.
                   </SkillTip>
+                  <LastEvaluatedIndicator iso={agentActivity.thesis} />
                   <ThesisPanel thesis={thesis} currentSymbol={symbol} multiSymbol={multiSymbol} />
                 </>
               )}
@@ -2557,6 +2565,7 @@ const AppContent = () => {
                     Also written by <code>find-trades</code> — support/resistance levels get flagged even when no
                     trade idea qualifies.
                   </SkillTip>
+                  <LastEvaluatedIndicator iso={agentActivity.levels} />
                   <LevelsPanel levels={levels} currentSymbol={symbol} multiSymbol={multiSymbol} />
                 </>
               )}
@@ -2567,6 +2576,7 @@ const AppContent = () => {
                     level. Enable the bell icon (top right) for real desktop notifications on new ones. Faded
                     ones have already resolved (invalidated, expired, or superseded) — nothing to act on.
                   </SkillTip>
+                  <LastEvaluatedIndicator iso={agentActivity.alerts} />
                   <AlertsPanel alerts={alerts} />
                 </>
               )}
@@ -2578,6 +2588,7 @@ const AppContent = () => {
                     edit/delete entries directly here. For real trades and account balance, see Portfolio
                     instead.
                   </SkillTip>
+                  <LastEvaluatedIndicator iso={agentActivity.journal} />
                   <JournalPanel
                     journal={journal}
                     onAdd={handleAddJournalEntry}
@@ -2611,6 +2622,7 @@ const AppContent = () => {
                     The run history of <code>find-trades</code> (and any future analysis skills) — including "no
                     setup found" results, so you can see what actually ran.
                   </SkillTip>
+                  <LastEvaluatedIndicator iso={agentActivity.activity} />
                   <ActivityPanel entries={analysisLog} />
                 </>
               )}

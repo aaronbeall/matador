@@ -17,6 +17,7 @@ import { Theses } from '../types/Thesis';
 import { Journal } from '../types/Journal';
 import { Positions, AccountBalances } from '../types/Portfolio';
 import { Connections } from '../types/Connection';
+import { AgentActivity } from '../types/AgentActivity';
 
 export async function getWatchlist(): Promise<Watchlist> {
   const res = await fetch('/api/watchlist');
@@ -167,6 +168,17 @@ export async function getSkills(): Promise<Skills> {
 export async function getConnections(): Promise<Connections> {
   const res = await fetch('/api/connections');
   if (!res.ok) throw new Error('Failed to load connections');
+  return res.json();
+}
+
+// When the agent last evaluated each analysis panel's data — see
+// src/types/AgentActivity.ts. Read-only from the frontend's perspective;
+// the agent writes this directly (same convention as thesis/levels/
+// alerts/journal/analysis-log) whenever it looks at a panel's data,
+// whether or not that look changed anything.
+export async function getAgentActivity(): Promise<AgentActivity> {
+  const res = await fetch('/api/agent-activity');
+  if (!res.ok) throw new Error('Failed to load agent activity');
   return res.json();
 }
 
