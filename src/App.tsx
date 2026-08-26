@@ -79,6 +79,7 @@ import { getPatternColor } from './components/PatternVisuals';
 import { PatternIllustration, PATTERN_ILLUSTRATIONS, DivergenceIllustration, DIVERGENCE_ILLUSTRATIONS } from './components/PatternIllustration';
 import { CrossMarkerShape, CrossMarkerPoint } from './components/CrossMarker';
 import { DivergenceConnectorLayer, DivergenceConnectorPair } from './components/DivergenceConnector';
+import { SignalIllustration, SIGNAL_ILLUSTRATIONS } from './components/SignalIllustration';
 import { CrossTooltip } from './components/CrossTooltip';
 import { computeAutoLevels } from './utils/autoLevels';
 import { CHART_COLORS } from './constants/colors';
@@ -1891,6 +1892,21 @@ const AppContent = () => {
                   arrow
                   title={
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5, maxWidth: 240 }}>
+                      {SIGNAL_ILLUSTRATIONS[key] && (
+                        <Box
+                          sx={{
+                            display: 'inline-flex',
+                            alignSelf: 'center',
+                            justifyContent: 'center',
+                            bgcolor: '#161616',
+                            borderRadius: 1,
+                            px: 1.5,
+                            py: 0.75,
+                          }}
+                        >
+                          <SignalIllustration spec={SIGNAL_ILLUSTRATIONS[key]} />
+                        </Box>
+                      )}
                       <Typography variant="caption" sx={{ fontWeight: 700 }}>{info.label}</Typography>
                       <Typography variant="caption" color="text.secondary">{info.description}</Typography>
                       <Typography variant="caption" sx={{ fontStyle: 'italic' }}>{info.why}</Typography>
