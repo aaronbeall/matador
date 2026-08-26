@@ -83,9 +83,34 @@ export const DIVERGENCE_ILLUSTRATIONS: Record<string, DivergenceSpec> = {
     oscConnector: [{ x: 20, y: 54 }, { x: 55, y: 48 }],
     direction: 'bullish',
   },
+  // Hidden — mirror-image comparators of the regular shapes above: same
+  // swing type (peaks for bearish, troughs for bullish), but price's
+  // second swing goes the OPPOSITE way (shallower, not a new extreme)
+  // while the oscillator still moves opposite to price.
+  //
+  // Price prints a lower high (swing2 below swing1, a shallower bounce);
+  // the oscillator's matching swing is higher.
+  'bearish-divergence-hidden-rsi': {
+    pricePath: 'M5,18 L20,4 L35,14 L55,10 L75,24',
+    priceConnector: [{ x: 20, y: 4 }, { x: 55, y: 10 }],
+    oscPath: 'M5,62 L20,54 L35,60 L55,46 L75,58',
+    oscConnector: [{ x: 20, y: 54 }, { x: 55, y: 46 }],
+    direction: 'bearish',
+  },
+  // Price prints a higher low (swing2 above swing1, a shallower pullback);
+  // the oscillator's matching swing is lower.
+  'bullish-divergence-hidden-rsi': {
+    pricePath: 'M5,10 L20,26 L35,16 L55,20 L75,6',
+    priceConnector: [{ x: 20, y: 26 }, { x: 55, y: 20 }],
+    oscPath: 'M5,44 L20,48 L35,42 L55,54 L75,40',
+    oscConnector: [{ x: 20, y: 48 }, { x: 55, y: 54 }],
+    direction: 'bullish',
+  },
 };
 DIVERGENCE_ILLUSTRATIONS['bearish-divergence-macd'] = DIVERGENCE_ILLUSTRATIONS['bearish-divergence-rsi'];
 DIVERGENCE_ILLUSTRATIONS['bullish-divergence-macd'] = DIVERGENCE_ILLUSTRATIONS['bullish-divergence-rsi'];
+DIVERGENCE_ILLUSTRATIONS['bearish-divergence-hidden-macd'] = DIVERGENCE_ILLUSTRATIONS['bearish-divergence-hidden-rsi'];
+DIVERGENCE_ILLUSTRATIONS['bullish-divergence-hidden-macd'] = DIVERGENCE_ILLUSTRATIONS['bullish-divergence-hidden-rsi'];
 
 export const DivergenceIllustration: React.FC<{ spec: DivergenceSpec }> = ({ spec }) => {
   const color = spec.direction === 'bullish' ? CHART_COLORS.priceUp : CHART_COLORS.priceDown;

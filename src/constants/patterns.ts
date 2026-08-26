@@ -103,4 +103,38 @@ export const PATTERN_INFO: Record<string, PatternInfo> = {
     description: "Price prints a higher swing high while the MACD histogram's matching swing is lower — same read as RSI divergence, off a different momentum measure.",
     why: "MACD's histogram reacts to moving-average convergence rather than RSI's overbought/oversold read, so it can catch or confirm an exhaustion RSI misses — most weight when both agree on the same swing.",
   },
+  // Hidden divergence is the mirror concept of regular divergence above: a
+  // *continuation* signal, not a reversal one. It only fires inside the
+  // trend it's continuing (gated server-side by EMA9 vs EMA21 at the
+  // confirming candle — see attachDivergence's hiddenRules) — the same
+  // price shape outside that trend context means something different and
+  // isn't tagged.
+  'bullish-divergence-hidden-rsi': {
+    label: 'Bullish Hidden RSI Divergence',
+    direction: 'bullish',
+    strength: 'moderate',
+    description: "Inside an uptrend, price prints a higher swing low (a shallower pullback) while RSI's matching swing is lower — momentum is stronger than the shallow pullback suggests.",
+    why: 'A continuation signal, not a reversal call — the pullback lacks the momentum to actually break the uptrend, arguing it resumes rather than rolls over.',
+  },
+  'bearish-divergence-hidden-rsi': {
+    label: 'Bearish Hidden RSI Divergence',
+    direction: 'bearish',
+    strength: 'moderate',
+    description: "Inside a downtrend, price prints a lower swing high (a shallower bounce) while RSI's matching swing is higher — momentum is stronger than the shallow bounce suggests.",
+    why: 'A continuation signal, not a reversal call — the bounce lacks the momentum to actually break the downtrend, arguing it resumes rather than reverses.',
+  },
+  'bullish-divergence-hidden-macd': {
+    label: 'Bullish Hidden MACD Divergence',
+    direction: 'bullish',
+    strength: 'moderate',
+    description: "Inside an uptrend, price prints a higher swing low while the MACD histogram's matching swing is lower — same continuation read as hidden RSI divergence, off a different momentum measure.",
+    why: 'Confirms the uptrend pullback is shallow on convergence/divergence terms too, not just RSI — most weight when both agree on the same swing.',
+  },
+  'bearish-divergence-hidden-macd': {
+    label: 'Bearish Hidden MACD Divergence',
+    direction: 'bearish',
+    strength: 'moderate',
+    description: "Inside a downtrend, price prints a lower swing high while the MACD histogram's matching swing is higher — same continuation read as hidden RSI divergence, off a different momentum measure.",
+    why: 'Confirms the downtrend bounce is shallow on convergence/divergence terms too, not just RSI — most weight when both agree on the same swing.',
+  },
 };

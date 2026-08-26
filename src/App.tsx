@@ -187,6 +187,34 @@ const STRENGTH_RANK: Record<PatternStrength, number> = { weak: 1, moderate: 2, s
 // rather than each getting its own hue.
 const OHLC_LINE_COLOR = '#90a4ae';
 
+// One row per divergence pattern key, driving the connector-line
+// computation below (see the divergencePairs/rsiDivergencePairs/
+// macdDivergencePairs useMemo). Every divergence variant — regular/hidden,
+// RSI/MACD — needs the exact same three things done with it: check its own
+// visiblePatterns toggle, draw a price-panel line between its two swing
+// points, and draw a second line on whichever oscillator panel it belongs
+// to. Expressing that as data here, rather than a hand-written if-block
+// per variant (which is what this used to be), is what keeps adding a new
+// divergence variant a one-line change instead of a new copy of the whole
+// pairs-building loop — the same lesson attachDivergence's own
+// DIVERGENCE_RULES table applies server-side.
+interface DivergenceRoute {
+  tag: string;
+  direction: 'bullish' | 'bearish';
+  panel: 'rsi' | 'macd';
+  oscillatorField: 'rsi' | 'histogram';
+}
+const DIVERGENCE_ROUTES: DivergenceRoute[] = [
+  { tag: 'bearish-divergence-rsi', direction: 'bearish', panel: 'rsi', oscillatorField: 'rsi' },
+  { tag: 'bullish-divergence-rsi', direction: 'bullish', panel: 'rsi', oscillatorField: 'rsi' },
+  { tag: 'bearish-divergence-macd', direction: 'bearish', panel: 'macd', oscillatorField: 'histogram' },
+  { tag: 'bullish-divergence-macd', direction: 'bullish', panel: 'macd', oscillatorField: 'histogram' },
+  { tag: 'bearish-divergence-hidden-rsi', direction: 'bearish', panel: 'rsi', oscillatorField: 'rsi' },
+  { tag: 'bullish-divergence-hidden-rsi', direction: 'bullish', panel: 'rsi', oscillatorField: 'rsi' },
+  { tag: 'bearish-divergence-hidden-macd', direction: 'bearish', panel: 'macd', oscillatorField: 'histogram' },
+  { tag: 'bullish-divergence-hidden-macd', direction: 'bullish', panel: 'macd', oscillatorField: 'histogram' },
+];
+
 // Settings-menu swatch color per signal — tied to its source indicator's
 // own chart color (ema9's yellow, macd's blue) rather than a new color, so
 // the swatch hints at which series it's derived from.
@@ -1393,64 +1421,45 @@ const AppContent = () => {
   // attachDivergence recorded server-side (src/utils/indicators.ts), not
   // re-derived here — only pairs whose partner candle is also in the
   // currently visible window get drawn (an off-screen partner has nowhere
-  // to place its end of the line). Each oscillator's pair is gated by its
-  // own visiblePatterns entry so muting either divergence pattern hides
-  // just its own connector, same as every other pattern-driven overlay on
-  // this chart. RSI and MACD divergence at the same candle share the same
-  // partner field (see attachDivergence's comment) and can both want a
-  // price-panel line for the identical two points — pricePairIds dedupes
-  // that rather than drawing the same segment twice.
+  // to place its end of the line). One generic pass over DIVERGENCE_ROUTES
+  // × filteredCandles replaces what used to be a hand-written branch per
+  // oscillator/direction/variant combination — adding hidden divergence on
+  // top of regular only meant adding rows to that table, not touching this
+  // loop. Two or more active routes can point at the identical two swing
+  // points (RSI and MACD divergence sharing a partner, see
+  // attachDivergence's comment) and all want the same price-panel line —
+  // pricePairIds dedupes that rather than drawing the same segment twice.
   const { divergencePairs, rsiDivergencePairs, macdDivergencePairs } = useMemo(() => {
     const price: DivergenceConnectorPair[] = [];
     const rsi: DivergenceConnectorPair[] = [];
     const macd: DivergenceConnectorPair[] = [];
-    const showRsiBearish = visiblePatterns.includes('bearish-divergence-rsi');
-    const showRsiBullish = visiblePatterns.includes('bullish-divergence-rsi');
-    const showMacdBearish = visiblePatterns.includes('bearish-divergence-macd');
-    const showMacdBullish = visiblePatterns.includes('bullish-divergence-macd');
-    if (!showRsiBearish && !showRsiBullish && !showMacdBearish && !showMacdBullish) {
-      return { divergencePairs: price, rsiDivergencePairs: rsi, macdDivergencePairs: macd };
-    }
+    const activeRoutes = DIVERGENCE_ROUTES.filter((r) => visiblePatterns.includes(r.tag));
+    if (activeRoutes.length === 0) return { divergencePairs: price, rsiDivergencePairs: rsi, macdDivergencePairs: macd };
+
     const byTimestamp = new Map(filteredCandles.map((c) => [c.timestamp, c]));
     const pricePairIds = new Set<string>();
-    const addPricePair = (direction: 'bullish' | 'bearish', partner: Candlestick, c: Candlestick) => {
-      const id = `${direction}-${partner.timestamp}-${c.timestamp}`;
-      if (pricePairIds.has(id)) return;
-      pricePairIds.add(id);
-      const key = direction === 'bearish' ? 'high' : 'low';
-      price.push({ id, fromTimestamp: partner.timestamp, fromValue: partner[key], toTimestamp: c.timestamp, toValue: c[key], direction });
-    };
 
     filteredCandles.forEach((c) => {
       const patterns = c.patterns ?? [];
+      for (const route of activeRoutes) {
+        if (!patterns.includes(route.tag)) continue;
+        const partnerTs = route.direction === 'bearish' ? c.bearishDivergencePartner : c.bullishDivergencePartner;
+        if (partnerTs == null) continue;
+        const partner = byTimestamp.get(partnerTs);
+        if (!partner) continue;
 
-      if (c.bearishDivergencePartner != null) {
-        const partner = byTimestamp.get(c.bearishDivergencePartner);
-        if (partner) {
-          const hasRsi = showRsiBearish && patterns.includes('bearish-divergence-rsi');
-          const hasMacd = showMacdBearish && patterns.includes('bearish-divergence-macd');
-          if (hasRsi || hasMacd) addPricePair('bearish', partner, c);
-          if (hasRsi && partner.rsi != null && c.rsi != null) {
-            rsi.push({ id: `rsi-bearish-${partner.timestamp}-${c.timestamp}`, fromTimestamp: partner.timestamp, fromValue: partner.rsi, toTimestamp: c.timestamp, toValue: c.rsi, direction: 'bearish' });
-          }
-          if (hasMacd && partner.histogram != null && c.histogram != null) {
-            macd.push({ id: `macd-bearish-${partner.timestamp}-${c.timestamp}`, fromTimestamp: partner.timestamp, fromValue: partner.histogram, toTimestamp: c.timestamp, toValue: c.histogram, direction: 'bearish' });
-          }
+        const priceId = `${route.direction}-${partner.timestamp}-${c.timestamp}`;
+        if (!pricePairIds.has(priceId)) {
+          pricePairIds.add(priceId);
+          const priceKey = route.direction === 'bearish' ? 'high' : 'low';
+          price.push({ id: priceId, fromTimestamp: partner.timestamp, fromValue: partner[priceKey], toTimestamp: c.timestamp, toValue: c[priceKey], direction: route.direction });
         }
-      }
 
-      if (c.bullishDivergencePartner != null) {
-        const partner = byTimestamp.get(c.bullishDivergencePartner);
-        if (partner) {
-          const hasRsi = showRsiBullish && patterns.includes('bullish-divergence-rsi');
-          const hasMacd = showMacdBullish && patterns.includes('bullish-divergence-macd');
-          if (hasRsi || hasMacd) addPricePair('bullish', partner, c);
-          if (hasRsi && partner.rsi != null && c.rsi != null) {
-            rsi.push({ id: `rsi-bullish-${partner.timestamp}-${c.timestamp}`, fromTimestamp: partner.timestamp, fromValue: partner.rsi, toTimestamp: c.timestamp, toValue: c.rsi, direction: 'bullish' });
-          }
-          if (hasMacd && partner.histogram != null && c.histogram != null) {
-            macd.push({ id: `macd-bullish-${partner.timestamp}-${c.timestamp}`, fromTimestamp: partner.timestamp, fromValue: partner.histogram, toTimestamp: c.timestamp, toValue: c.histogram, direction: 'bullish' });
-          }
+        const fromOsc = partner[route.oscillatorField];
+        const toOsc = c[route.oscillatorField];
+        if (fromOsc != null && toOsc != null) {
+          const target = route.panel === 'rsi' ? rsi : macd;
+          target.push({ id: `${route.tag}-${partner.timestamp}-${c.timestamp}`, fromTimestamp: partner.timestamp, fromValue: fromOsc, toTimestamp: c.timestamp, toValue: toOsc, direction: route.direction });
         }
       }
     });

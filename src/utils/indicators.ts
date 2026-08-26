@@ -322,17 +322,78 @@ export const findSwingLows = (candles: Candlestick[]): number[] => {
   return idxs;
 };
 
-// Regular divergence, checked against two oscillators (v1 scope per the
-// approved signals plan: regular divergence only, not hidden): price and
-// the oscillator disagreeing at consecutive confirmed swings — price makes
-// a higher high while the oscillator's matching swing is lower (bearish),
-// or price makes a lower low while the oscillator's matching swing is
-// higher (bullish). The swing pairing itself only depends on price
-// (findSwingHighs/findSwingLows), so it's identical regardless of which
-// oscillator is being checked — this just re-runs the same comparison
-// against a different field and tag suffix, rather than duplicating the
-// swing-pairing logic per oscillator.
+// Every divergence variant (regular + hidden, RSI + MACD histogram) is the
+// same shape of check: price and an oscillator moving opposite ways at
+// consecutive confirmed swings. What differs between variants is just
+// which way price and the oscillator each need to move, which swing type
+// (high/low) they're checked against, and — for hidden divergence only —
+// whether the prevailing trend at the confirming candle matches (hidden
+// divergence is a continuation signal, so it only counts inside the trend
+// it's continuing). Expressing each variant as one row in this table,
+// rather than a hand-written comparison per variant, is what keeps adding
+// a new one (hidden divergence, or a future third oscillator) a one-line
+// change instead of a new copy of the whole detection loop.
 type DivergenceOscillator = 'rsi' | 'histogram';
+type DivergenceComparator = (laterValue: number, earlierValue: number) => boolean;
+
+const higher: DivergenceComparator = (later, earlier) => later > earlier;
+const lower: DivergenceComparator = (later, earlier) => later < earlier;
+
+// EMA9 vs EMA21 at the confirming candle — the same fast/slow read the
+// EMA-cross signal already uses elsewhere, just consulted here as a cheap
+// "which way is the trend leaning right now" gate rather than its own
+// signal. Not a rigorous trend classification (no lookback window, no
+// higher-highs/higher-lows read) — good enough to gate a continuation
+// signal from firing against the prevailing trend, which is the actual
+// requirement.
+const isUptrend = (c: Candlestick): boolean => c.ema9 != null && c.ema21 != null && c.ema9 > c.ema21;
+const isDowntrend = (c: Candlestick): boolean => c.ema9 != null && c.ema21 != null && c.ema9 < c.ema21;
+
+interface DivergenceRule {
+  tag: string;
+  direction: 'bullish' | 'bearish';
+  oscillator: DivergenceOscillator;
+  swingType: 'high' | 'low';
+  priceCompare: DivergenceComparator; // compares price[j] against price[i]
+  oscCompare: DivergenceComparator; // compares oscillator[j] against oscillator[i]
+  trendFilter?: (candle: Candlestick) => boolean; // only set for hidden variants
+}
+
+function oscillatorTagSuffix(oscillator: DivergenceOscillator): string {
+  return oscillator === 'rsi' ? 'rsi' : 'macd';
+}
+
+// Regular divergence — a reversal signal: price makes a NEW extreme the
+// oscillator doesn't confirm (a higher high with a lower oscillator high,
+// or a lower low with a higher oscillator low).
+const regularRules = (oscillator: DivergenceOscillator): DivergenceRule[] => {
+  const suffix = oscillatorTagSuffix(oscillator);
+  return [
+    { tag: `bearish-divergence-${suffix}`, direction: 'bearish', oscillator, swingType: 'high', priceCompare: higher, oscCompare: lower },
+    { tag: `bullish-divergence-${suffix}`, direction: 'bullish', oscillator, swingType: 'low', priceCompare: lower, oscCompare: higher },
+  ];
+};
+
+// Hidden divergence — a continuation signal: price makes a SHALLOWER swing
+// than last time (a lower high inside a downtrend, or a higher low inside
+// an uptrend) while the oscillator makes a stronger one in the trend's own
+// direction — exact mirror-image comparators of the regular rules above,
+// gated by trend context since the same price shape means the opposite
+// thing outside that trend.
+const hiddenRules = (oscillator: DivergenceOscillator): DivergenceRule[] => {
+  const suffix = oscillatorTagSuffix(oscillator);
+  return [
+    { tag: `bearish-divergence-hidden-${suffix}`, direction: 'bearish', oscillator, swingType: 'high', priceCompare: lower, oscCompare: higher, trendFilter: isDowntrend },
+    { tag: `bullish-divergence-hidden-${suffix}`, direction: 'bullish', oscillator, swingType: 'low', priceCompare: higher, oscCompare: lower, trendFilter: isUptrend },
+  ];
+};
+
+const DIVERGENCE_RULES: DivergenceRule[] = [
+  ...regularRules('rsi'),
+  ...regularRules('histogram'),
+  ...hiddenRules('rsi'),
+  ...hiddenRules('histogram'),
+];
 
 interface DivergenceHit {
   index: number;
@@ -341,64 +402,53 @@ interface DivergenceHit {
   partnerTimestamp: number;
 }
 
-function detectDivergence(candles: Candlestick[], oscillator: DivergenceOscillator, tagSuffix: string): DivergenceHit[] {
+function detectDivergence(candles: Candlestick[], rule: DivergenceRule): DivergenceHit[] {
   const hits: DivergenceHit[] = [];
+  const priceField = rule.swingType === 'high' ? 'high' : 'low';
+  const swings = rule.swingType === 'high' ? findSwingHighs(candles) : findSwingLows(candles);
 
-  const swingHighs = findSwingHighs(candles);
-  for (let k = 1; k < swingHighs.length; k++) {
-    const i = swingHighs[k - 1];
-    const j = swingHighs[k];
-    const oscI = candles[i][oscillator];
-    const oscJ = candles[j][oscillator];
+  for (let k = 1; k < swings.length; k++) {
+    const i = swings[k - 1];
+    const j = swings[k];
+    const oscI = candles[i][rule.oscillator];
+    const oscJ = candles[j][rule.oscillator];
     if (oscI == null || oscJ == null) continue;
-    if (candles[j].high > candles[i].high && oscJ < oscI) {
-      hits.push({ index: j, tag: `bearish-divergence-${tagSuffix}`, direction: 'bearish', partnerTimestamp: candles[i].timestamp });
-    }
-  }
-
-  const swingLows = findSwingLows(candles);
-  for (let k = 1; k < swingLows.length; k++) {
-    const i = swingLows[k - 1];
-    const j = swingLows[k];
-    const oscI = candles[i][oscillator];
-    const oscJ = candles[j][oscillator];
-    if (oscI == null || oscJ == null) continue;
-    if (candles[j].low < candles[i].low && oscJ > oscI) {
-      hits.push({ index: j, tag: `bullish-divergence-${tagSuffix}`, direction: 'bullish', partnerTimestamp: candles[i].timestamp });
-    }
+    if (!rule.priceCompare(candles[j][priceField], candles[i][priceField])) continue;
+    if (!rule.oscCompare(oscJ, oscI)) continue;
+    if (rule.trendFilter && !rule.trendFilter(candles[j])) continue;
+    hits.push({ index: j, tag: rule.tag, direction: rule.direction, partnerTimestamp: candles[i].timestamp });
   }
 
   return hits;
 }
 
 // Reuses the existing pattern pipeline wholesale rather than being its own
-// overlay: tags the confirming candle's `patterns` array with
-// 'bullish-divergence-rsi'/'bearish-divergence-rsi'/'-macd' (see
-// PATTERN_INFO), which is what lets the Scatter/tooltip/badges/
-// settings-checkbox/find-trades-table machinery already built for
-// candlestick patterns pick these up for free. Must run after
-// RSI+MACD (attachIndicators) and after attachCandlePatterns, since it
-// appends onto whatever `patterns` already tagged rather than replacing it.
+// overlay: tags the confirming candle's `patterns` array with the matching
+// tag from DIVERGENCE_RULES above (see PATTERN_INFO), which is what lets
+// the Scatter/tooltip/badges/settings-checkbox/find-trades-table machinery
+// already built for candlestick patterns pick these up for free. Must run
+// after RSI+MACD (attachIndicators) and after attachCandlePatterns, since
+// it appends onto whatever `patterns` already tagged rather than replacing
+// it.
 //
 // Also records which earlier swing each tag is being compared against
 // (bullishDivergencePartner/bearishDivergencePartner, the partner candle's
 // timestamp) — not needed for the tag/tooltip pipeline itself, but is what
 // lets the chart draw an actual connector line between the two swing
-// points instead of just marking the later one. RSI and MACD divergence at
-// the same candle share this same field rather than needing their own:
-// the partner is purely a function of price's own swing sequence
-// (findSwingHighs/Lows), identical regardless of which oscillator
-// triggered the tag, so there's never a value to disambiguate between.
-// Computed once here rather than re-derived client-side, same "server
-// computes once, browser only renders" principle as everything else in
-// this file.
+// points instead of just marking the later one. Every rule sharing the
+// same direction at a given candle shares this same field rather than
+// needing its own: the partner is purely a function of price's own swing
+// sequence (findSwingHighs/Lows), identical regardless of which rule
+// triggered the tag — and since a swing pair can only ever satisfy one of
+// "price higher" or "price lower," a regular and hidden rule of the same
+// direction can never both fire on the same pair, so there's never a
+// second value competing for that field. Computed once here rather than
+// re-derived client-side, same "server computes once, browser only
+// renders" principle as everything else in this file.
 export const attachDivergence = (candles: Candlestick[]): Candlestick[] => {
   if (candles.length < SWING_WINDOW * 2 + 2) return candles;
 
-  const hits = [
-    ...detectDivergence(candles, 'rsi', 'rsi'),
-    ...detectDivergence(candles, 'histogram', 'macd'),
-  ];
+  const hits = DIVERGENCE_RULES.flatMap((rule) => detectDivergence(candles, rule));
   if (hits.length === 0) return candles;
 
   const tags = new Map<number, string[]>();
