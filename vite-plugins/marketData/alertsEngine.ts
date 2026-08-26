@@ -3,6 +3,7 @@ import path from 'path';
 import type { Candlestick } from '../../src/types/Candlestick';
 import type { AnalysisSnapshot } from '../../src/types/AnalysisSnapshot';
 import type { Alert, AlertCondition, Alerts } from '../../src/types/Alert';
+import { SWING_WINDOW } from '../../src/utils/indicators';
 
 // Evaluates the pending AlertConditions Claude wrote against whatever
 // annotated candle history cache.ts's recomputeAnalysis just assembled
@@ -95,6 +96,18 @@ export function evaluateCondition(condition: AlertCondition, candles: Candlestic
       const prevOutside = prev.close > prevUpper || prev.close < prevLower;
       const currInside = curr.close <= currUpper && curr.close >= currLower;
       return prevOutside && currInside;
+    }
+
+    case 'divergence-rsi': {
+      // Not a prev/curr edge trigger like every case above — a divergence
+      // tag can only be confirmed SWING_WINDOW bars after the swing it
+      // marks (see attachDivergence), so it never lands on the newest
+      // candle. Check presence over that same trailing depth instead; a
+      // pending alert stops being re-evaluated the moment this returns
+      // true (see evaluateAlertsForSymbol below), so there's nothing extra
+      // to track for "already alerted on this one."
+      const tag = `${condition.direction}-divergence-rsi`;
+      return candles.slice(-(SWING_WINDOW + 2)).some((c) => c.patterns?.includes(tag));
     }
   }
 }

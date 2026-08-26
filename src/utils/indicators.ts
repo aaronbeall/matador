@@ -289,7 +289,10 @@ export const attachIndicators = (
 // Bars on each side a candle's high/low must beat to count as a confirmed
 // swing pivot — a standard fractal-style pivot, not a stored indicator, so
 // it only needs a lookback+lookahead window, no warm-up period like EMA/SMA.
-const SWING_WINDOW = 3;
+// Exported so alertsEngine.ts's divergence condition checks the same
+// trailing-window depth a tag can actually land in, rather than a
+// duplicated magic number that could silently drift out of sync.
+export const SWING_WINDOW = 3;
 
 const findSwingHighs = (candles: Candlestick[]): number[] => {
   const idxs: number[] = [];

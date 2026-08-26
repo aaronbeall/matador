@@ -33,7 +33,17 @@ export type AlertCondition =
   // timeframe. A dedicated kind rather than folding into indicator-threshold
   // since a band's upper/lower are per-candle computed values, not one
   // static number to compare against.
-  | { kind: 'band-cross'; timeframe: TimeInterval; band: 'vwap' | 'bollinger'; direction: 'above-upper' | 'below-lower' | 'back-inside' };
+  | { kind: 'band-cross'; timeframe: TimeInterval; band: 'vwap' | 'bollinger'; direction: 'above-upper' | 'below-lower' | 'back-inside' }
+  // Regular RSI divergence (see attachDivergence, src/utils/indicators.ts)
+  // freshly appearing in the recent candle history. Unlike every kind
+  // above, this isn't a prev/curr edge trigger on the latest candle — a
+  // divergence tag can only be confirmed a few bars after the swing it
+  // marks, so it never lands on the newest candle. evaluateCondition checks
+  // a short trailing window for the tag's presence instead; once a pending
+  // alert fires it stops being re-evaluated (same lifecycle as every other
+  // kind), so there's no need to separately track "already alerted on this
+  // one" here.
+  | { kind: 'divergence-rsi'; timeframe: TimeInterval; direction: 'bullish' | 'bearish' };
 
 export type AlertSeverity = 'watch' | 'action';
 

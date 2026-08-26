@@ -215,6 +215,8 @@ function formatCondition(c: AlertCondition): string {
       if (c.direction === 'below-lower') return `${c.timeframe} price closes below ${bandLabel} lower band`;
       return `${c.timeframe} price closes back inside ${bandLabel}`;
     }
+    case 'divergence-rsi':
+      return `${c.timeframe} ${c.direction} RSI divergence appears`;
   }
 }
 
