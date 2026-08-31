@@ -252,12 +252,32 @@ const PRESET_ICON: Record<string, React.ComponentType<{ fontSize?: 'small' | 'in
   'market-structure': MarketStructurePresetIcon,
 };
 
-// "1H / 1MO" — the same interval/timeFrame vocabulary the toolbar's own
+// Standard trading-platform casing (TradingView etc.): lowercase for
+// sub-daily units, uppercase for daily-and-above — that case distinction
+// is the actual disambiguator between "1m" (minute) and "1M" (month),
+// which a blanket .toUpperCase() erases (both become "1M"/"1MO", exactly
+// the collision this function exists to avoid). Shared by the Interval/
+// Display-Range toggle buttons and the preset timeframe chip below, so
+// the abbreviation is consistent everywhere it appears. The two
+// ToggleButtonGroups rendering these labels also need their own
+// `textTransform: 'none'` override (see their sx props below) — MUI's
+// default ToggleButton style force-uppercases button text, which would
+// silently erase this same case distinction all over again at the CSS
+// layer even though the underlying string is correctly mixed-case.
+const formatTimeUnitLabel = (value: string): string => {
+  if (value === 'today') return 'Today';
+  if (value.endsWith('mo')) return `${value.slice(0, -2)}M`; // month
+  if (value.endsWith('d')) return `${value.slice(0, -1)}D`; // day
+  if (value.endsWith('w')) return `${value.slice(0, -1)}W`; // week
+  return value; // minutes ('m') and hours ('h') are already lowercase
+};
+
+// "1h / 1M" — the same interval/timeFrame vocabulary the toolbar's own
 // toggle buttons use (see the ToggleButtonGroup labels below), just
 // combined into one compact chip so a preset's timeframe setup is visible
 // without applying it first or reading the full tooltip prose.
 const formatPresetTimeframe = (preset: ChartPreset) =>
-  `${preset.timeInterval.toUpperCase()} / ${preset.timeFrame === 'today' ? 'Today' : preset.timeFrame.toUpperCase()}`;
+  `${formatTimeUnitLabel(preset.timeInterval)} / ${formatTimeUnitLabel(preset.timeFrame)}`;
 
 const SIGNAL_SWATCH: Record<SignalKey, string> = {
   'ema-cross': CHART_COLORS.ema9,
@@ -1860,10 +1880,11 @@ const AppContent = () => {
               exclusive
               onChange={handleTimeIntervalChange}
               size="small"
+              sx={{ '& .MuiToggleButton-root': { textTransform: 'none' } }}
             >
               {(['1m', '5m', '15m', '1h'] as const).map((iv) => (
                 <MuiTooltip key={iv} title={TIME_INTERVAL_HELP[iv]} placement="top" arrow>
-                  <ToggleButton value={iv}>{iv.toUpperCase()}</ToggleButton>
+                  <ToggleButton value={iv}>{formatTimeUnitLabel(iv)}</ToggleButton>
                 </MuiTooltip>
               ))}
             </ToggleButtonGroup>
@@ -1877,10 +1898,11 @@ const AppContent = () => {
               exclusive
               onChange={handleTimeFrameChange}
               size="small"
+              sx={{ '& .MuiToggleButton-root': { textTransform: 'none' } }}
             >
               {(['today', '15m', '1h', '3h', '6h', '1d', '1w', '1mo', '3mo'] as const).map((tf) => (
                 <MuiTooltip key={tf} title={TIME_FRAME_HELP[tf]} placement="top" arrow>
-                  <ToggleButton value={tf}>{tf === 'today' ? 'Today' : tf.toUpperCase()}</ToggleButton>
+                  <ToggleButton value={tf}>{formatTimeUnitLabel(tf)}</ToggleButton>
                 </MuiTooltip>
               ))}
             </ToggleButtonGroup>
