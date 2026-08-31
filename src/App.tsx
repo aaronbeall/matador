@@ -25,6 +25,7 @@ import {
   Checkbox,
   Tabs,
   Tab,
+  Chip,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import {
@@ -57,6 +58,8 @@ import {
   NotificationsOff as NotificationsOffIcon,
   ChevronRight as CollapseIcon,
   Bookmarks as PresetsIcon,
+  Schedule as MarketHoursOnlyIcon,
+  Public as AllHoursIcon,
   Bolt as ScalpPresetIcon,
   TrendingUp as MomentumPresetIcon,
   SyncAlt as MeanReversionPresetIcon,
@@ -186,6 +189,7 @@ const TIME_FRAME_STORAGE_KEY = 'matador-time-frame';
 const CHART_MODE_STORAGE_KEY = 'matador-chart-mode';
 const SIDEBAR_OPEN_STORAGE_KEY = 'matador-sidebar-open';
 const SIDEBAR_TAB_STORAGE_KEY = 'matador-sidebar-tab';
+const MARKET_HOURS_ONLY_STORAGE_KEY = 'matador-market-hours-only';
 
 const VALID_TIME_INTERVALS: TimeInterval[] = ['1m', '5m', '15m', '1h', '1d', '1w'];
 const VALID_TIME_FRAMES: TimeFrame[] = ['today', '15m', '1h', '3h', '6h', '1d', '1w', '1mo', '3mo'];
@@ -247,6 +251,13 @@ const PRESET_ICON: Record<string, React.ComponentType<{ fontSize?: 'small' | 'in
   'clean-price-action': CleanPriceActionPresetIcon,
   'market-structure': MarketStructurePresetIcon,
 };
+
+// "1H / 1MO" — the same interval/timeFrame vocabulary the toolbar's own
+// toggle buttons use (see the ToggleButtonGroup labels below), just
+// combined into one compact chip so a preset's timeframe setup is visible
+// without applying it first or reading the full tooltip prose.
+const formatPresetTimeframe = (preset: ChartPreset) =>
+  `${preset.timeInterval.toUpperCase()} / ${preset.timeFrame === 'today' ? 'Today' : preset.timeFrame.toUpperCase()}`;
 
 const SIGNAL_SWATCH: Record<SignalKey, string> = {
   'ema-cross': CHART_COLORS.ema9,
@@ -335,6 +346,29 @@ const getFilteredCandles = (candles: Candlestick[], timeFrame: TimeFrame) => {
   return candles.filter(c => c.timestamp > anchor - getTimeFrameMs(timeFrame));
 };
 
+// Regular-session-only filter, layered on top of getFilteredCandles above
+// — that one decides HOW MUCH history is on screen, this decides whether
+// premarket/after-hours bars within that window are included at all. A
+// no-op for 'today' (getFilteredCandles already clips it to the 9:30-4:00
+// session) and for 1d/1w candle intervals (each bar already represents a
+// whole session/week, not a specific hour, so there's no "hours" to
+// filter). Only meaningful for intraday intervals viewed over a
+// multi-day+ range, where Alpaca's own bars otherwise include every hour
+// it has data for. Reuses the same ET wall-clock math getTodayWindow does,
+// just per-candle instead of once for a single anchor day, since a
+// multi-day window spans more than one trading day's worth of bounds.
+const isWithinMarketHours = (timestamp: number): boolean => {
+  const { year, month, day } = getEtDateParts(timestamp);
+  const open = etWallClockToUtc(year, month, day, 9, 30);
+  const close = etWallClockToUtc(year, month, day, 16, 0);
+  return timestamp >= open && timestamp <= close;
+};
+
+const filterMarketHours = (candles: Candlestick[], timeInterval: TimeInterval, timeFrame: TimeFrame, marketHoursOnly: boolean) => {
+  if (!marketHoursOnly || timeFrame === 'today' || timeInterval === '1d' || timeInterval === '1w') return candles;
+  return candles.filter((c) => isWithinMarketHours(c.timestamp));
+};
+
 const calculateChanges = (candles: Candlestick[], timeFrame: TimeFrame) => {
   const filteredCandles = getFilteredCandles(candles, timeFrame);
   if (filteredCandles.length < 2) return { delta: 0, percent: 0 };
@@ -412,6 +446,15 @@ const AppContent = () => {
   useEffect(() => {
     localStorage.setItem(TIME_FRAME_STORAGE_KEY, timeFrame);
   }, [timeFrame]);
+
+  // Defaults to 'all' (the app's existing behavior, unchanged) — an opt-in
+  // toggle, not a silent behavior change for anyone already using the app.
+  const [marketHoursOnly, setMarketHoursOnly] = useState(
+    () => localStorage.getItem(MARKET_HOURS_ONLY_STORAGE_KEY) === 'true'
+  );
+  useEffect(() => {
+    localStorage.setItem(MARKET_HOURS_ONLY_STORAGE_KEY, String(marketHoursOnly));
+  }, [marketHoursOnly]);
 
   const [chartMode, setChartMode] = useState<ChartMode>(() =>
     readStoredString(CHART_MODE_STORAGE_KEY, VALID_CHART_MODES, 'candles')
@@ -1204,84 +1247,41 @@ const AppContent = () => {
   // squished or entirely outside the visible domain, hiding levels along
   // with it, whenever the trading day had a gap in it).
   const filteredCandles = useMemo(
-    () => getFilteredCandles(candles, timeFrame),
-    [candles, timeFrame],
+    () => filterMarketHours(getFilteredCandles(candles, timeFrame), timeInterval, timeFrame, marketHoursOnly),
+    [candles, timeFrame, timeInterval, marketHoursOnly],
   );
 
-  const xAxisDomain = useMemo<[number, number]>(() => {
-    if (!filteredCandles.length) {
-      const now = Date.now();
-      return [now - getTimeFrameMs(timeFrame), now];
-    }
-    return [filteredCandles[0].timestamp, filteredCandles[filteredCandles.length - 1].timestamp];
-  }, [filteredCandles, timeFrame]);
-
-  // Median gap between consecutive candles' timestamps — shared by
-  // mainBarSize and candleBodyWidth below. Median (not mean/min) because
-  // it's insensitive to a single outlier in either direction: one
-  // anomalously tiny gap (a live-merged in-progress candle a few seconds
-  // after the prior bar, which is what let Recharts' own auto-sizing
-  // collapse to 0px) can't drag it down, and one huge gap (an overnight/
-  // weekend break between trading sessions) can't drag it up.
-  const medianCandleDeltaMs = useMemo(() => {
-    if (filteredCandles.length < 2) return 0;
-    const deltas = filteredCandles.slice(1).map((c, i) => c.timestamp - filteredCandles[i].timestamp).sort((a, b) => a - b);
-    return deltas[Math.floor(deltas.length / 2)];
-  }, [filteredCandles]);
+  // The X axis is type="category" (see the 3 <XAxis> render sites below),
+  // not a continuous time scale — every candle sits in its own evenly-
+  // spaced slot regardless of how much real time it spans, so a weekend,
+  // an overnight gap, or (with marketHoursOnly on) a stripped premarket/
+  // after-hours stretch never shows up as blank chart space. Recharts
+  // derives a category axis's domain automatically from the data itself
+  // (the ordered set of `timestamp` values already on filteredCandles), so
+  // there's no separate domain to compute here the way a numeric/time
+  // scale would need — a preceding version of this file computed
+  // `xAxisDomain`/`medianCandleDeltaMs` from real timestamp gaps
+  // specifically to keep candle width sane across those gaps; none of
+  // that's needed anymore now that there are no gaps to compensate for.
 
   // Explicit pixel barSize for the candlestick Bar (see its render site
-  // below), applied uniformly across the whole series. Recharts' own
-  // auto-sizing derives width from timestamp gaps directly and degenerates
-  // exactly the way medianCandleDeltaMs above guards against; passing a
-  // fixed number instead makes `props.x`/`props.width` inside
-  // CandlestickBar reliable again — `x + width/2` is a stable, correctly-
-  // spaced center point regardless of local density. It does NOT need to
-  // be locally accurate itself (see candleBodyWidth below for the value
-  // that actually drives visual fill); it only has to be a sane, nonzero
-  // constant Recharts won't collapse.
-  const mainBarSize = useMemo(() => {
-    const domainDuration = xAxisDomain[1] - xAxisDomain[0];
-    if (!(domainDuration > 0) || !(medianCandleDeltaMs > 0)) return Math.max(2, mainChartWidth / Math.max(1, filteredCandles.length));
-    return Math.max(2, (mainChartWidth / domainDuration) * medianCandleDeltaMs);
-  }, [filteredCandles, xAxisDomain, mainChartWidth, medianCandleDeltaMs]);
+  // below) — every candle gets the same slot width, since a category axis
+  // already guarantees even spacing regardless of real elapsed time.
+  const mainBarSize = useMemo(
+    () => Math.max(2, mainChartWidth / Math.max(1, filteredCandles.length)),
+    [filteredCandles.length, mainChartWidth],
+  );
 
   // Per-candle pixel width, keyed by timestamp — what actually drives each
   // body/wick's visual fill (see CandlestickBar's widthByTimestamp prop).
-  // mainBarSize above is one GLOBAL number applied uniformly across the
-  // whole series, but real candle spacing isn't uniform: a multi-day view's
-  // domain spans overnight/weekend gaps with no candles in them at all, so
-  // any single global width is systematically too wide inside the
-  // densely-traded clusters (where real neighbor spacing is much tighter
-  // than the domain-wide average) — bars overlap there even though the
-  // same width looks fine in a sparser stretch. Using each candle's own
-  // actual neighbor gap (averaged across both sides where available) scales
-  // correctly with real local density instead of one span-wide average —
-  // but the candle sitting right next to a real session gap would
-  // otherwise inherit half that gap as "its" width (ballooning to well
-  // over 100px), so any local gap wider than 3x the series' typical
-  // spacing is clamped back down to typical: a real gap should render as
-  // empty space between two normal-width candles, not get absorbed into
-  // one candle's own body.
+  // Uniform (same value as mainBarSize for every candle) rather than
+  // locally computed from neighbor gaps, since every candle already
+  // occupies an identical category slot.
   const candleBodyWidth = useMemo(() => {
     const map = new Map<number, number>();
-    if (filteredCandles.length === 0) return map;
-    const domainDuration = xAxisDomain[1] - xAxisDomain[0];
-    const pxPerMs = domainDuration > 0 ? mainChartWidth / domainDuration : 0;
-    const maxDeltaMs = medianCandleDeltaMs > 0 ? medianCandleDeltaMs * 3 : Infinity;
-    filteredCandles.forEach((c, i) => {
-      const prev = filteredCandles[i - 1];
-      const next = filteredCandles[i + 1];
-      const localDeltaMs = Math.min(
-        maxDeltaMs,
-        prev && next ? (next.timestamp - prev.timestamp) / 2 :
-        next ? next.timestamp - c.timestamp :
-        prev ? c.timestamp - prev.timestamp :
-        0,
-      );
-      map.set(c.timestamp, pxPerMs > 0 && localDeltaMs > 0 ? pxPerMs * localDeltaMs : mainBarSize);
-    });
+    filteredCandles.forEach((c) => map.set(c.timestamp, mainBarSize));
     return map;
-  }, [filteredCandles, xAxisDomain, mainChartWidth, mainBarSize, medianCandleDeltaMs]);
+  }, [filteredCandles, mainBarSize]);
 
   // Only the bottom-most rendered panel shows time-axis tick labels — the
   // panels above it keep their gridlines (for alignment) but not the
@@ -1884,6 +1884,22 @@ const AppContent = () => {
                 </MuiTooltip>
               ))}
             </ToggleButtonGroup>
+            <ToggleButtonGroup
+              value={marketHoursOnly ? 'market' : 'all'}
+              exclusive
+              onChange={(_e, val: 'market' | 'all' | null) => {
+                if (val) setMarketHoursOnly(val === 'market');
+              }}
+              size="small"
+              disabled={timeFrame === 'today' || timeInterval === '1d' || timeInterval === '1w'}
+            >
+              <MuiTooltip title="Market hours only — 9:30am-4:00pm ET. Strips premarket/after-hours bars out of a multi-day intraday window instead of blending every hour together." placement="top" arrow>
+                <ToggleButton value="market"><MarketHoursOnlyIcon fontSize="small" /></ToggleButton>
+              </MuiTooltip>
+              <MuiTooltip title="All hours — includes premarket and after-hours bars alongside the regular session (the default)." placement="top" arrow>
+                <ToggleButton value="all"><AllHoursIcon fontSize="small" /></ToggleButton>
+              </MuiTooltip>
+            </ToggleButtonGroup>
           </Box>
           <MuiTooltip title="Chart Presets — one-click setups bundling interval, range, and indicators/patterns/signals for a specific kind of read">
             <IconButton size="small" onClick={(e) => setPresetsMenuAnchor(e.currentTarget)}>
@@ -1917,7 +1933,14 @@ const AppContent = () => {
                     >
                       <PatternIllustration candles={preset.thumbnail} />
                     </Box>
-                    <Typography variant="caption" sx={{ fontWeight: 700 }}>{preset.label}</Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <Typography variant="caption" sx={{ fontWeight: 700 }}>{preset.label}</Typography>
+                      <Chip
+                        size="small"
+                        label={formatPresetTimeframe(preset)}
+                        sx={{ height: 16, fontSize: '0.6rem', fontWeight: 700, '& .MuiChip-label': { px: 0.6 } }}
+                      />
+                    </Box>
                     <Typography variant="caption" color="text.secondary">{preset.description}</Typography>
                     <Typography variant="caption" sx={{ fontStyle: 'italic' }}>{preset.howToUse}</Typography>
                   </Box>
@@ -1934,7 +1957,12 @@ const AppContent = () => {
                     const Icon = PRESET_ICON[preset.id];
                     return Icon ? <Icon fontSize="small" /> : null;
                   })()}
-                  <Typography variant="caption" noWrap>{preset.label}</Typography>
+                  <Typography variant="caption" noWrap sx={{ flexGrow: 1 }}>{preset.label}</Typography>
+                  <Chip
+                    size="small"
+                    label={formatPresetTimeframe(preset)}
+                    sx={{ height: 16, fontSize: '0.6rem', fontWeight: 700, flexShrink: 0, '& .MuiChip-label': { px: 0.6 } }}
+                  />
                 </MenuItem>
               </MuiTooltip>
             ))}
@@ -2160,9 +2188,8 @@ const AppContent = () => {
                   dataKey="timestamp"
                   tickFormatter={formatXAxisTick}
                   tick={bottomPanel === 'main'}
-                  domain={xAxisDomain}
-                  type="number"
-                  scale="time"
+                  type="category"
+                  allowDuplicatedCategory={false}
                   interval="preserveStartEnd"
                   minTickGap={60}
                 />
@@ -2584,9 +2611,8 @@ const AppContent = () => {
                     dataKey="timestamp"
                     tickFormatter={formatXAxisTick}
                     tick={bottomPanel === 'macd'}
-                    domain={xAxisDomain}
-                    type="number"
-                    scale="time"
+                    type="category"
+                    allowDuplicatedCategory={false}
                     interval="preserveStartEnd"
                     minTickGap={60}
                   />
@@ -2655,9 +2681,8 @@ const AppContent = () => {
                     dataKey="timestamp"
                     tickFormatter={formatXAxisTick}
                     tick={bottomPanel === 'rsi'}
-                    domain={xAxisDomain}
-                    type="number"
-                    scale="time"
+                    type="category"
+                    allowDuplicatedCategory={false}
                     interval="preserveStartEnd"
                     minTickGap={60}
                   />
