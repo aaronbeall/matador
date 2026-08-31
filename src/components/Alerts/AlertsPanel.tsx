@@ -217,6 +217,8 @@ function formatCondition(c: AlertCondition): string {
     }
     case 'divergence-rsi':
       return `${c.timeframe} ${c.direction} RSI divergence appears`;
+    case 'gap-crosses':
+      return `${c.timeframe} price gaps ${c.direction} $${c.level}`;
   }
 }
 

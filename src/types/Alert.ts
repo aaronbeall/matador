@@ -43,7 +43,23 @@ export type AlertCondition =
   // alert fires it stops being re-evaluated (same lifecycle as every other
   // kind), so there's no need to separately track "already alerted on this
   // one" here.
-  | { kind: 'divergence-rsi'; timeframe: TimeInterval; direction: 'bullish' | 'bearish' };
+  | { kind: 'divergence-rsi'; timeframe: TimeInterval; direction: 'bullish' | 'bearish' }
+  // Price gapping PAST a level between candles, rather than trading
+  // through it — the case price-crosses structurally can't catch. A
+  // price-crosses check compares two consecutive closes, so it only fires
+  // when a candle actually transitions across the level; if the next
+  // candle simply *opens* already on the far side (an overnight/premarket
+  // gap being the usual cause, but any gap between bars qualifies), there's
+  // no close-to-close transition to detect and price-crosses never fires,
+  // even though the level was very much breached. Same shape otherwise —
+  // one edge-triggered check on the last two candles — just comparing the
+  // new candle's open instead of its close. On its own this only tells you
+  // "the level got breached, pay attention" — it deliberately doesn't try
+  // to time an entry (chasing the gap itself is usually the wrong trade);
+  // pair it with a price-crosses alert on a faster timeframe, activeFrom
+  // shortly after this one would fire, watching for the retest-and-hold
+  // that's the actual entry.
+  | { kind: 'gap-crosses'; timeframe: TimeInterval; level: number; direction: 'above' | 'below' };
 
 export type AlertSeverity = 'watch' | 'action';
 

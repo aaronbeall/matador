@@ -2,17 +2,22 @@ import React from 'react';
 import { CHART_COLORS } from '../constants/colors';
 import { Direction } from '../constants/direction';
 import { CrossMarkerShape } from './CrossMarker';
+import { BreakMarkerShape } from './BreakMarker';
 
 // Small inline-SVG teaching schematic for a Signals-tab entry — a
 // crossover (two lines meeting, marker at the intersection) or a swing
 // (one line with a peak/trough, marker at the extremum). The marker glyph
-// itself is the real CrossMarkerShape component, not a redrawn lookalike —
-// so the icon and the actual on-chart marker are guaranteed to match,
-// same principle DivergenceIllustration already uses for the connector
-// line. Coordinates are hand-picked schematic points in an 80×44 viewBox,
-// not real data; each shows one representative direction (a signal is
-// direction-symmetric on the real chart, this just picks the more
-// intuitive textbook example to draw).
+// itself is the real CrossMarkerShape/BreakMarkerShape component, not a
+// redrawn lookalike — so the icon and the actual on-chart marker are
+// guaranteed to match, same principle DivergenceIllustration already uses
+// for the connector line. `markerShape`/`kind` let a spec opt into
+// BreakMarkerShape (for bos/choch) instead of the default CrossMarkerShape;
+// omitting `markerX`/`markerY` entirely (structure-lines, which has no
+// single-event marker to teach — it's the connecting line itself) just
+// skips drawing a marker. Coordinates are hand-picked schematic points in
+// an 80×44 viewBox, not real data; each shows one representative direction
+// (a signal is direction-symmetric on the real chart, this just picks the
+// more intuitive textbook example to draw).
 interface SignalLine {
   path: string;
   color: string;
@@ -20,9 +25,11 @@ interface SignalLine {
 }
 interface SignalIllustrationSpec {
   lines: SignalLine[];
-  markerX: number;
-  markerY: number;
-  direction: Direction;
+  markerX?: number;
+  markerY?: number;
+  direction?: Direction;
+  markerShape?: 'cross' | 'break';
+  kind?: 'bos' | 'choch'; // only meaningful when markerShape is 'break'
 }
 
 export const SIGNAL_ILLUSTRATIONS: Record<string, SignalIllustrationSpec> = {
@@ -61,6 +68,32 @@ export const SIGNAL_ILLUSTRATIONS: Record<string, SignalIllustrationSpec> = {
     markerY: 35,
     direction: 'bullish',
   },
+  // The connecting-line signal itself, not a single-event marker — a
+  // 4-point staircase (higher-high/higher-low) with no marker glyph, since
+  // this teaches what the connector LOOKS like, not an event to spot.
+  'structure-lines': {
+    lines: [{ path: 'M5,36 L22,22 L38,26 L55,12 L75,6', color: '#90a4ae', dasharray: '3 2' }],
+  },
+  // Price breaking above the last swing high while the trend was already
+  // rising — the continuation case.
+  bos: {
+    lines: [{ path: 'M5,34 L22,20 L38,24 L58,10', color: '#90a4ae' }],
+    markerX: 58,
+    markerY: 10,
+    direction: 'bullish',
+    markerShape: 'break',
+    kind: 'bos',
+  },
+  // Price breaking below the swing low that was supporting an uptrend —
+  // the first reversal warning.
+  choch: {
+    lines: [{ path: 'M5,10 L22,20 L38,16 L58,32', color: '#90a4ae' }],
+    markerX: 58,
+    markerY: 32,
+    direction: 'bearish',
+    markerShape: 'break',
+    kind: 'choch',
+  },
 };
 
 export const SignalIllustration: React.FC<{ spec: SignalIllustrationSpec }> = ({ spec }) => (
@@ -68,10 +101,20 @@ export const SignalIllustration: React.FC<{ spec: SignalIllustrationSpec }> = ({
     {spec.lines.map((line, i) => (
       <path key={i} d={line.path} fill="none" stroke={line.color} strokeWidth={1.5} strokeDasharray={line.dasharray} />
     ))}
-    <CrossMarkerShape
-      cx={spec.markerX}
-      cy={spec.markerY}
-      payload={{ timestamp: 0, value: 1, direction: spec.direction }}
-    />
+    {spec.markerX != null && spec.markerY != null && spec.direction && (
+      spec.markerShape === 'break' ? (
+        <BreakMarkerShape
+          cx={spec.markerX}
+          cy={spec.markerY}
+          payload={{ timestamp: 0, value: 1, direction: spec.direction, kind: spec.kind }}
+        />
+      ) : (
+        <CrossMarkerShape
+          cx={spec.markerX}
+          cy={spec.markerY}
+          payload={{ timestamp: 0, value: 1, direction: spec.direction }}
+        />
+      )
+    )}
   </svg>
 );

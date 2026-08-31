@@ -5,7 +5,7 @@ import { CHART_COLORS } from '../constants/colors';
 // unit, not a real price. Bullish/bearish is derived from open vs. close
 // the same way the real chart reads it (close above open = bullish, i.e.
 // a smaller y since smaller y is the higher price).
-interface CandleSpec {
+export interface CandleSpec {
   open: number;
   close: number;
   high: number;
@@ -134,8 +134,12 @@ export const DivergenceIllustration: React.FC<{ spec: DivergenceSpec }> = ({ spe
 // three bars, schematic not real data. Deliberately reuses the same
 // up/down colors as the real chart (CHART_COLORS) so it reads as "this is
 // what that pattern actually looks like," not a generic decoration.
-export const PatternIllustration: React.FC<{ candles: CandleSpec[] }> = ({ candles }) => {
-  const barWidth = 26;
+// `size="sm"` renders the same shape at menu-row scale (e.g. a preset
+// thumbnail sitting inline next to its label) rather than the larger
+// tooltip-illustration scale — same viewBox/proportions either way, just a
+// smaller pixel footprint, so one component serves both call sites.
+export const PatternIllustration: React.FC<{ candles: CandleSpec[]; size?: 'sm' | 'md' }> = ({ candles, size = 'md' }) => {
+  const barWidth = size === 'sm' ? 14 : 26;
   const width = candles.length * barWidth;
   const height = 100;
 

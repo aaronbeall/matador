@@ -34,6 +34,21 @@ export const SIGNAL_INFO: Record<string, SignalInfo> = {
     description: 'A confirmed pivot — this candle\'s low beat every low within 3 bars on either side.',
     why: 'The mirror of Swing High: a sequence of higher swing lows argues an uptrend intact, a lower one argues it\'s breaking down — also the structural low that divergence checks against.',
   },
+  'structure-lines': {
+    label: 'Structure Lines',
+    description: 'Connects each confirmed swing high and swing low in sequence.',
+    why: 'Turns isolated swing-high/swing-low dots into the actual higher-high/higher-low (or lower-high/lower-low) staircase, so the trend structure is visible at a glance instead of read out of a table.',
+  },
+  bos: {
+    label: 'Break of Structure (BOS)',
+    description: 'Price closes beyond the most recent swing point in the direction the trend was already moving.',
+    why: 'Confirms the existing trend is continuing with real conviction — the standard price-action trigger for adding to or entering a continuation trade, not just watching from the sideline.',
+  },
+  choch: {
+    label: 'Change of Character (CHoCH)',
+    description: 'Price closes beyond the most recent swing point AGAINST the direction the trend was moving.',
+    why: 'The first objective warning a trend may be ending — not proof of a reversal on its own, but the earliest price-action signal the prior structure has failed and a new one may be forming.',
+  },
 };
 
 export type SignalKey = keyof typeof SIGNAL_INFO;

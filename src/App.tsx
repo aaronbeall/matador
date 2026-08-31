@@ -56,6 +56,14 @@ import {
   NotificationsActive as NotificationsOnIcon,
   NotificationsOff as NotificationsOffIcon,
   ChevronRight as CollapseIcon,
+  Bookmarks as PresetsIcon,
+  Bolt as ScalpPresetIcon,
+  TrendingUp as MomentumPresetIcon,
+  SyncAlt as MeanReversionPresetIcon,
+  StackedLineChart as SwingTrendPresetIcon,
+  CallSplit as DivergencePresetIcon,
+  CandlestickChart as CleanPriceActionPresetIcon,
+  Stairs as MarketStructurePresetIcon,
 } from '@mui/icons-material';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { MarketDataClient, ExternalDataStatus } from './services/MarketDataClient';
@@ -68,7 +76,7 @@ import { Logo } from './components/Logo';
 import { MarketHoursIndicator } from './components/MarketHoursIndicator';
 import { SymbolBadge } from './components/SymbolBadge';
 import { Indicator, ALL_INDICATORS, findSwingHighs, findSwingLows } from './utils/indicators';
-import { DIRECTION_COLOR } from './constants/direction';
+import { DIRECTION_COLOR, Direction } from './constants/direction';
 import { CandlestickBar } from './components/CandlestickBar';
 import { OhlcvLegend } from './components/OhlcvLegend';
 import { IndicatorLegend, IndicatorLegendItem } from './components/IndicatorLegend';
@@ -78,9 +86,13 @@ import { PatternTooltip } from './components/PatternTooltip';
 import { getPatternColor } from './components/PatternVisuals';
 import { PatternIllustration, PATTERN_ILLUSTRATIONS, DivergenceIllustration, DIVERGENCE_ILLUSTRATIONS } from './components/PatternIllustration';
 import { CrossMarkerShape, CrossMarkerPoint } from './components/CrossMarker';
+import { BreakMarkerShape, BreakMarkerPoint } from './components/BreakMarker';
+import { BreakTooltip } from './components/BreakTooltip';
 import { DivergenceConnectorLayer, DivergenceConnectorPair } from './components/DivergenceConnector';
 import { SignalIllustration, SIGNAL_ILLUSTRATIONS } from './components/SignalIllustration';
 import { CrossTooltip } from './components/CrossTooltip';
+import { classifyStructure, detectStructureBreaks } from './utils/marketStructure';
+import { describeTrendAction, describeBreakAction } from './utils/marketStructureAction';
 import { computeAutoLevels } from './utils/autoLevels';
 import { CHART_COLORS } from './constants/colors';
 import { PATTERN_INFO, PatternStrength } from './constants/patterns';
@@ -137,8 +149,8 @@ import {
   subscribeToDataEvents,
 } from './services/dataApi';
 import { LastEvaluatedIndicator } from './components/Sidebar/LastEvaluatedIndicator';
+import { TimeFrame, ChartPreset, CHART_PRESETS, TIME_INTERVAL_HELP, TIME_FRAME_HELP } from './constants/chartPresets';
 
-type TimeFrame = 'today' | '15m' | '1h' | '3h' | '6h' | '1d' | '1w';
 // 'price' — just the close line, the plain "line chart" read. 'ohlc' — all
 // four open/high/low/close lines together (the old 'lines' mode, renamed
 // now that 'price' exists as the simpler single-line option). 'all' —
@@ -176,7 +188,7 @@ const SIDEBAR_OPEN_STORAGE_KEY = 'matador-sidebar-open';
 const SIDEBAR_TAB_STORAGE_KEY = 'matador-sidebar-tab';
 
 const VALID_TIME_INTERVALS: TimeInterval[] = ['1m', '5m', '15m', '1h', '1d', '1w'];
-const VALID_TIME_FRAMES: TimeFrame[] = ['today', '15m', '1h', '3h', '6h', '1d', '1w'];
+const VALID_TIME_FRAMES: TimeFrame[] = ['today', '15m', '1h', '3h', '6h', '1d', '1w', '1mo', '3mo'];
 const VALID_CHART_MODES: ChartMode[] = ['candles', 'price', 'ohlc', 'all'];
 const VALID_SIDEBAR_TABS: SidebarTab[] = ['watchlist', 'strategy', 'thesis', 'ideas', 'levels', 'alerts', 'journal', 'portfolio', 'connections', 'activity', 'skills', 'instructions'];
 
@@ -222,11 +234,28 @@ const DIVERGENCE_ROUTES: DivergenceRoute[] = [
 // Settings-menu swatch color per signal — tied to its source indicator's
 // own chart color (ema9's yellow, macd's blue) rather than a new color, so
 // the swatch hints at which series it's derived from.
+// One glyph per preset id, shown in the Presets menu row itself so a
+// preset is distinguishable at a glance without hovering — the fuller
+// candle-silhouette illustration (see chartPresets.ts's `thumbnail` field)
+// stays reserved for the tooltip, where there's room to actually read it.
+const PRESET_ICON: Record<string, React.ComponentType<{ fontSize?: 'small' | 'inherit' }>> = {
+  'opening-range-scalp': ScalpPresetIcon,
+  'intraday-momentum': MomentumPresetIcon,
+  'mean-reversion': MeanReversionPresetIcon,
+  'swing-trend': SwingTrendPresetIcon,
+  'divergence-watch': DivergencePresetIcon,
+  'clean-price-action': CleanPriceActionPresetIcon,
+  'market-structure': MarketStructurePresetIcon,
+};
+
 const SIGNAL_SWATCH: Record<SignalKey, string> = {
   'ema-cross': CHART_COLORS.ema9,
   'macd-cross': CHART_COLORS.macd,
   'swing-high': DIRECTION_COLOR.bearish,
   'swing-low': DIRECTION_COLOR.bullish,
+  'structure-lines': '#90a4ae',
+  bos: '#26c6da',
+  choch: '#ab47bc',
 };
 
 // 'today' isn't a fixed trailing duration (see getTodayWindow below) — 24h
@@ -238,7 +267,9 @@ const getTimeFrameMs = (timeFrame: TimeFrame) =>
   timeFrame === '3h' ? 3 * 60 * 60 * 1000 :
   timeFrame === '6h' ? 6 * 60 * 60 * 1000 :
   timeFrame === '1d' || timeFrame === 'today' ? 24 * 60 * 60 * 1000 :
-  7 * 24 * 60 * 60 * 1000;
+  timeFrame === '1w' ? 7 * 24 * 60 * 60 * 1000 :
+  timeFrame === '1mo' ? 30 * 24 * 60 * 60 * 1000 :
+  90 * 24 * 60 * 60 * 1000; // '3mo'
 
 const ET_TIMEZONE = 'America/New_York';
 
@@ -481,7 +512,28 @@ const AppContent = () => {
   const visiblePatterns = patternsVisible ? enabledPatterns : [];
   const visibleSignals = signalsVisible ? enabledSignals : [];
 
+  // Applying a preset replaces the real selection wholesale (not a merge)
+  // and force-unmutes all three categories — the point of picking a named
+  // setup is seeing exactly what it specifies, not have it silently hidden
+  // by whatever mute state was left on from before.
+  const handleApplyPreset = (preset: ChartPreset) => {
+    setTimeInterval(preset.timeInterval);
+    setTimeFrame(preset.timeFrame);
+    setIndicators(preset.indicators);
+    setEnabledPatterns(preset.patterns);
+    setEnabledSignals(preset.signals);
+    setIndicatorsVisible(true);
+    setPatternsVisible(true);
+    setSignalsVisible(true);
+  };
+
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
+  // Separate from menuAnchor (Indicators/Patterns/Signals) — presets are a
+  // one-click "apply this whole setup" action, not a toggle list to leave
+  // open while you fine-tune, so they get their own menu rather than a tab
+  // sharing chrome (the "Show on chart" mute switch, tab counts) that
+  // doesn't mean anything for a preset.
+  const [presetsMenuAnchor, setPresetsMenuAnchor] = useState<null | HTMLElement>(null);
   const [menuTab, setMenuTab] = useState<'indicators' | 'patterns' | 'signals'>('indicators');
   // Horizontal price crosshair on the main chart — Recharts' Tooltip only
   // gives a vertical, nearest-candle crosshair out of the box; Y is
@@ -548,6 +600,18 @@ const AppContent = () => {
     setHoveredCrossMarker({ point, x: evt.clientX, y: evt.clientY });
   }, []);
   const handleCrossMarkerLeave = useCallback(() => setHoveredCrossMarker(null), []);
+
+  // Same hover-tooltip shape as cross/pattern markers, for BOS/CHoCH break
+  // markers.
+  const [hoveredBreakMarker, setHoveredBreakMarker] = useState<{
+    point: BreakMarkerPoint;
+    x: number;
+    y: number;
+  } | null>(null);
+  const handleBreakMarkerHover = useCallback((point: BreakMarkerPoint, evt: React.MouseEvent) => {
+    setHoveredBreakMarker({ point, x: evt.clientX, y: evt.clientY });
+  }, []);
+  const handleBreakMarkerLeave = useCallback(() => setHoveredBreakMarker(null), []);
 
   const marketDataClient = useRef<MarketDataClient | null>(null);
   const [wsEnabled, setWsEnabled] = useState(true);
@@ -1417,6 +1481,62 @@ const AppContent = () => {
   const hasSwingHighMarkers = swingHighMarkers.some((m) => m.value != null);
   const hasSwingLowMarkers = swingLowMarkers.some((m) => m.value != null);
 
+  // Market structure: a real, lookback-based trend classification off the
+  // swing-pivot sequence above, plus Break-of-Structure/Change-of-Character
+  // event detection (see src/utils/marketStructure.ts) — both purely
+  // client-side over filteredCandles, same as every other signal on this
+  // chart, no backend change needed.
+  const structure = useMemo(() => classifyStructure(filteredCandles), [filteredCandles]);
+  const structureBreaks = useMemo(() => detectStructureBreaks(filteredCandles), [filteredCandles]);
+  const trendActionSentence = useMemo(
+    () => (displayCandle ? describeTrendAction(structure, displayCandle.close) : null),
+    [structure, displayCandle]
+  );
+
+  const breakMarkers: BreakMarkerPoint[] = filteredCandles.map((c, i) => {
+    const showBos = visibleSignals.includes('bos');
+    const showChoch = visibleSignals.includes('choch');
+    if (!showBos && !showChoch) return { timestamp: c.timestamp, value: null, direction: 'neutral' };
+    const brk = structureBreaks.find((b) => b.index === i && ((b.kind === 'bos' && showBos) || (b.kind === 'choch' && showChoch)));
+    if (!brk) return { timestamp: c.timestamp, value: null, direction: 'neutral' };
+    return {
+      timestamp: c.timestamp,
+      value: c.close,
+      direction: brk.direction,
+      kind: brk.kind,
+      brokenLevel: brk.brokenLevel,
+      brokenLevelTimestamp: brk.brokenLevelTimestamp,
+    };
+  });
+  const hasBreakMarkers = breakMarkers.some((m) => m.value != null);
+
+  // Structure connector lines — the actual "see the structure" zigzag, not
+  // just isolated swing dots. Two separate polylines (highs connected to
+  // highs, lows connected to lows, not alternating high-low) so the
+  // higher-high/higher-low (or lower-high/lower-low) staircase reads
+  // correctly; reuses DivergenceConnectorLayer as-is (already fully
+  // generic over any two chart points, see its own component comment).
+  // Independent toggle from swing-high/swing-low themselves.
+  const structurePairs: DivergenceConnectorPair[] = useMemo(() => {
+    if (!visibleSignals.includes('structure-lines')) return [];
+    const pairs: DivergenceConnectorPair[] = [];
+    const highIdxs = findSwingHighs(filteredCandles);
+    const lowIdxs = findSwingLows(filteredCandles);
+    for (let i = 1; i < highIdxs.length; i++) {
+      const prev = filteredCandles[highIdxs[i - 1]];
+      const curr = filteredCandles[highIdxs[i]];
+      const direction: Direction = curr.high > prev.high ? 'bullish' : curr.high < prev.high ? 'bearish' : 'neutral';
+      pairs.push({ id: `struct-high-${prev.timestamp}-${curr.timestamp}`, fromTimestamp: prev.timestamp, fromValue: prev.high, toTimestamp: curr.timestamp, toValue: curr.high, direction });
+    }
+    for (let i = 1; i < lowIdxs.length; i++) {
+      const prev = filteredCandles[lowIdxs[i - 1]];
+      const curr = filteredCandles[lowIdxs[i]];
+      const direction: Direction = curr.low > prev.low ? 'bullish' : curr.low < prev.low ? 'bearish' : 'neutral';
+      pairs.push({ id: `struct-low-${prev.timestamp}-${curr.timestamp}`, fromTimestamp: prev.timestamp, fromValue: prev.low, toTimestamp: curr.timestamp, toValue: curr.low, direction });
+    }
+    return pairs;
+  }, [filteredCandles, visibleSignals]);
+
   // Auto-computed reference levels (prior day H/L/C, premarket H/L,
   // opening range) — only meaningful zoomed into intraday granularity,
   // not on the 1d/1w interval where "yesterday" is just the adjacent bar.
@@ -1732,7 +1852,7 @@ const AppContent = () => {
             </ToggleButtonGroup>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <MuiTooltip title="Candle Interval">
+            <MuiTooltip title="Candle Interval — what each bar on the chart represents (a minute, an hour, a day...)" placement="top" arrow>
               <TimerIcon sx={{ color: 'text.secondary' }} />
             </MuiTooltip>
             <ToggleButtonGroup
@@ -1741,14 +1861,15 @@ const AppContent = () => {
               onChange={handleTimeIntervalChange}
               size="small"
             >
-              <ToggleButton value="1m">1M</ToggleButton>
-              <ToggleButton value="5m">5M</ToggleButton>
-              <ToggleButton value="15m">15M</ToggleButton>
-              <ToggleButton value="1h">1H</ToggleButton>
+              {(['1m', '5m', '15m', '1h'] as const).map((iv) => (
+                <MuiTooltip key={iv} title={TIME_INTERVAL_HELP[iv]} placement="top" arrow>
+                  <ToggleButton value={iv}>{iv.toUpperCase()}</ToggleButton>
+                </MuiTooltip>
+              ))}
             </ToggleButtonGroup>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <MuiTooltip title="Display Range">
+            <MuiTooltip title="Display Range — how far back the chart shows, independent of candle size" placement="top" arrow>
               <DateRangeIcon sx={{ color: 'text.secondary' }} />
             </MuiTooltip>
             <ToggleButtonGroup
@@ -1757,15 +1878,67 @@ const AppContent = () => {
               onChange={handleTimeFrameChange}
               size="small"
             >
-              <ToggleButton value="today">Today</ToggleButton>
-              <ToggleButton value="15m">15M</ToggleButton>
-              <ToggleButton value="1h">1H</ToggleButton>
-              <ToggleButton value="3h">3H</ToggleButton>
-              <ToggleButton value="6h">6H</ToggleButton>
-              <ToggleButton value="1d">1D</ToggleButton>
-              <ToggleButton value="1w">1W</ToggleButton>
+              {(['today', '15m', '1h', '3h', '6h', '1d', '1w', '1mo', '3mo'] as const).map((tf) => (
+                <MuiTooltip key={tf} title={TIME_FRAME_HELP[tf]} placement="top" arrow>
+                  <ToggleButton value={tf}>{tf === 'today' ? 'Today' : tf.toUpperCase()}</ToggleButton>
+                </MuiTooltip>
+              ))}
             </ToggleButtonGroup>
           </Box>
+          <MuiTooltip title="Chart Presets — one-click setups bundling interval, range, and indicators/patterns/signals for a specific kind of read">
+            <IconButton size="small" onClick={(e) => setPresetsMenuAnchor(e.currentTarget)}>
+              <PresetsIcon />
+            </IconButton>
+          </MuiTooltip>
+          <Menu
+            anchorEl={presetsMenuAnchor}
+            open={Boolean(presetsMenuAnchor)}
+            onClose={() => setPresetsMenuAnchor(null)}
+            MenuListProps={{ dense: true, sx: { py: 0.5 } }}
+            slotProps={{ paper: { sx: { width: 320 } } }}
+          >
+            {CHART_PRESETS.map((preset) => (
+              <MuiTooltip
+                key={preset.id}
+                placement="right"
+                arrow
+                title={
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5, maxWidth: 280 }}>
+                    <Box
+                      sx={{
+                        display: 'inline-flex',
+                        alignSelf: 'center',
+                        justifyContent: 'center',
+                        bgcolor: '#161616',
+                        borderRadius: 1,
+                        px: 1.5,
+                        py: 0.75,
+                      }}
+                    >
+                      <PatternIllustration candles={preset.thumbnail} />
+                    </Box>
+                    <Typography variant="caption" sx={{ fontWeight: 700 }}>{preset.label}</Typography>
+                    <Typography variant="caption" color="text.secondary">{preset.description}</Typography>
+                    <Typography variant="caption" sx={{ fontStyle: 'italic' }}>{preset.howToUse}</Typography>
+                  </Box>
+                }
+              >
+                <MenuItem
+                  sx={{ minHeight: 26, py: 0.6, px: 1.5, gap: 1 }}
+                  onClick={() => {
+                    handleApplyPreset(preset);
+                    setPresetsMenuAnchor(null);
+                  }}
+                >
+                  {(() => {
+                    const Icon = PRESET_ICON[preset.id];
+                    return Icon ? <Icon fontSize="small" /> : null;
+                  })()}
+                  <Typography variant="caption" noWrap>{preset.label}</Typography>
+                </MenuItem>
+              </MuiTooltip>
+            ))}
+          </Menu>
           <MuiTooltip title="Indicators">
             <IconButton size="small" onClick={(e) => setMenuAnchor(e.currentTarget)}>
               <SettingsIcon />
@@ -1940,7 +2113,12 @@ const AppContent = () => {
           <Box sx={{ flexGrow: 1, minHeight: '60%', position: 'relative' }}>
             {displayCandle && (
               <Box sx={{ position: 'absolute', top: 8, left: 8, zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.5 }}>
-                <OhlcvLegend candle={displayCandle} indicators={indicators} stretched={stretchInfo} />
+                <OhlcvLegend
+                  candle={displayCandle}
+                  indicators={indicators}
+                  stretched={stretchInfo}
+                  structure={trendActionSentence ? { trend: structure.trend, action: trendActionSentence } : null}
+                />
                 <IndicatorLegend items={mainIndicatorItems} />
                 <PatternBadges patterns={displayPatterns} />
               </Box>
@@ -1970,6 +2148,9 @@ const AppContent = () => {
                 />
                 {divergencePairs.length > 0 && (
                   <Customized component={(chartProps: any) => <DivergenceConnectorLayer {...chartProps} pairs={divergencePairs} />} />
+                )}
+                {structurePairs.length > 0 && (
+                  <Customized component={(chartProps: any) => <DivergenceConnectorLayer {...chartProps} pairs={structurePairs} />} />
                 )}
                 <CartesianGrid
                   strokeDasharray="3 3"
@@ -2333,6 +2514,17 @@ const AppContent = () => {
                     legendType="none"
                   />
                 )}
+                {hasBreakMarkers && (
+                  <Scatter
+                    data={breakMarkers}
+                    dataKey="value"
+                    shape={(props: any) => (
+                      <BreakMarkerShape {...props} onHover={handleBreakMarkerHover} onLeave={handleBreakMarkerLeave} />
+                    )}
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
+                )}
               </ComposedChart>
             </ResponsiveContainer>
             )}
@@ -2349,6 +2541,24 @@ const AppContent = () => {
               point={hoveredCrossMarker.point}
               x={hoveredCrossMarker.x}
               y={hoveredCrossMarker.y}
+            />
+          )}
+          {hoveredBreakMarker && hoveredBreakMarker.point.kind && (
+            <BreakTooltip
+              point={hoveredBreakMarker.point}
+              action={describeBreakAction(
+                {
+                  index: 0,
+                  timestamp: hoveredBreakMarker.point.timestamp,
+                  kind: hoveredBreakMarker.point.kind,
+                  direction: hoveredBreakMarker.point.direction,
+                  brokenLevel: hoveredBreakMarker.point.brokenLevel ?? 0,
+                  brokenLevelTimestamp: hoveredBreakMarker.point.brokenLevelTimestamp ?? 0,
+                },
+                structure
+              )}
+              x={hoveredBreakMarker.x}
+              y={hoveredBreakMarker.y}
             />
           )}
 

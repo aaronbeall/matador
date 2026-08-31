@@ -109,6 +109,17 @@ export function evaluateCondition(condition: AlertCondition, candles: Candlestic
       const tag = `${condition.direction}-divergence-rsi`;
       return candles.slice(-(SWING_WINDOW + 2)).some((c) => c.patterns?.includes(tag));
     }
+
+    case 'gap-crosses':
+      // Same edge-trigger shape as price-crosses, but checks the new
+      // candle's OPEN rather than its close — price-crosses can only catch
+      // a level being traded through, so it never fires when a candle
+      // instead opens already past the level (an overnight/premarket gap
+      // being the usual cause). Comparing prev's close to curr's open is
+      // what actually detects that.
+      return condition.direction === 'above'
+        ? prev.close < condition.level && curr.open >= condition.level
+        : prev.close > condition.level && curr.open <= condition.level;
   }
 }
 
